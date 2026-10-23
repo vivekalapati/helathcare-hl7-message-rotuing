@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:amqp="http://www.mulesoft.org/schema/mule/amqp"
+      xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+      http://www.mulesoft.org/schema/mule/amqp http://www.mulesoft.org/schema/mule/amqp/current/mule-amqp.xsd
+      http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd">
+
+    <!-- HOSPITAL EVENT RECEIVER -->
+
+    <flow name="hospital-event-receiver-flow">
+
+        <!-- RECEIVE HL7 EVENT FROM CLOUDAMQP -->
+
+        <amqp:listener
+                doc:name="Receive Hospital Event"
+                config-ref="AMQP_Config"
+                queueName="hospital.hl7.events"/>
+
+        <!-- LOG RECEIVED HOSPITAL EVENT -->
+
+        <logger
+                level="INFO"
+                doc:name="Log Hospital Event"
+                message="#['Hospital received HL7 event: ' ++ write(payload, 'application/json')]"/>
+
+    </flow>
+
+</mule>

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xsi:schemaLocation="
+http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd 
+      http://www.mulesoft.org/schema/mule/core
+      http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+      http://www.mulesoft.org/schema/mule/munit
+      http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+      http://www.mulesoft.org/schema/mule/munit-tools
+      http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+    <munit:config name="global-error-handler-test.xml"/>
+
+    <!-- Test helper flow deliberately raises an error -->
+    <flow name="munit-global-error-helper-flow">
+
+        <set-variable variableName="hl7ObjectKey"
+                      value="MUNIT-INVALID-HL7.txt"
+                      doc:name="Set HL7 Object Key"/>
+
+        <raise-error type="APP:HL7_TEST_ERROR"
+                     description="Simulated HL7 processing failure"
+                     doc:name="Simulate HL7 Failure"/>
+
+        <error-handler ref="Global_HL7_Error_Handler"/>
+
+    </flow>
+
+    <munit:test name="HL7-Global-Error-Handler-Test"
+                description="Verify global handler propagates errors"
+                expectedErrorType="APP:HL7_TEST_ERROR">
+
+        <munit:execution>
+
+            <flow-ref name="munit-global-error-helper-flow"
+                      doc:name="Trigger Global Error Handler"/>
+
+        </munit:execution>
+
+        <munit:validation>
+
+            <munit-tools:verify-call processor="mule:logger"
+                                     times="1">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Log Error Details']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+
+        </munit:validation>
+
+    </munit:test>
+
+</mule>

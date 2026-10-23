@@ -1,0 +1,1220 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule
+    xmlns="http://www.mulesoft.org/schema/mule/core"
+    xmlns:amqp="http://www.mulesoft.org/schema/mule/amqp"
+    xmlns:s3="http://www.mulesoft.org/schema/mule/s3"
+    xmlns:db="http://www.mulesoft.org/schema/mule/db"
+    xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+    xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/amqp http://www.mulesoft.org/schema/mule/amqp/current/mule-amqp.xsd
+        http://www.mulesoft.org/schema/mule/s3 http://www.mulesoft.org/schema/mule/s3/current/mule-s3.xsd
+        http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+    <!-- GLOBAL CONFIGURATION -->
+
+    <configuration-properties file="config.properties"/>
+
+    <db:config name="Database_Config">
+        <db:my-sql-connection
+            host="${db.host}"
+            port="${db.port}"
+            user="${db.user}"
+            password="${db.password}"
+            database="${db.name}">
+            <db:connection-properties>
+                <db:connection-property
+                    key="sslMode"
+                    value="VERIFY_IDENTITY"/>
+            </db:connection-properties>
+        </db:my-sql-connection>
+    </db:config>
+
+    <s3:config name="Amazon_S3_Configuration">
+        <s3:connection
+            accessKey="${aws.accessKey}"
+            secretKey="${aws.secretKey}"
+            region="${aws.region}"/>
+    </s3:config>
+
+    <amqp:config name="AMQP_Config">
+        <amqp:connection
+            host="warthog.lmq.cloudamqp.com"
+            port="5671"
+            virtualHost="hsxqiioj"
+            username="hsxqiioj"
+            password="${amqp.password}"
+            useTls="true"/>
+    </amqp:config>
+
+    <!-- FLOW 1: AWS S3 INBOUND -->
+
+    <flow name="s3-hl7-inbound-flow">
+
+        <s3:new-object-listener
+            config-ref="Amazon_S3_Configuration"
+            bucketName="${aws.bucket}"
+            folder="incoming-hl7/"
+            doc:name="On New HL7 Object">
+            <scheduling-strategy>
+                <fixed-frequency
+                    frequency="30"
+                    timeUnit="SECONDS"/>
+            </scheduling-strategy>
+        </s3:new-object-listener>
+
+        <set-variable
+            variableName="hl7ObjectKey"
+            value="#[payload.key default payload.Key default '']"
+            doc:name="Store Object Key"/>
+
+        <choice doc:name="Check HL7 Extension">
+
+            <when expression="#[vars.hl7ObjectKey endsWith '.hl7']">
+
+                <set-variable
+                    variableName="hl7FileName"
+                    value="#[(vars.hl7ObjectKey splitBy '/')[-1]]"
+                    doc:name="Store File Name"/>
+
+                <logger
+                    level="INFO"
+                    message="#['New HL7 file: ' ++ vars.hl7FileName]"/>
+
+                <s3:get-object
+                    config-ref="Amazon_S3_Configuration"
+                    bucketName="${aws.bucket}"
+                    key="#[vars.hl7ObjectKey]"
+                    doc:name="Get HL7 File"/>
+
+                <set-variable
+                    variableName="originalHL7"
+                    value="#[payload as String]"
+                    doc:name="Store Original HL7"/>
+
+                <flow-ref
+                    name="healthcare-hl7-routingFlow"
+                    doc:name="Process HL7 Message"/>
+
+                <s3:delete-object
+                    config-ref="Amazon_S3_Configuration"
+                    bucketName="${aws.bucket}"
+                    key="#[vars.hl7ObjectKey]"
+                    doc:name="Delete Handled Incoming HL7"/>
+
+                <logger
+                    level="INFO"
+                    message="#['HL7 file handled: ' ++ vars.hl7FileName]"/>
+
+            </when>
+
+            <otherwise>
+                <logger
+                    level="DEBUG"
+                    message="Skipping non-HL7 object"/>
+            </otherwise>
+
+        </choice>
+
+        <error-handler ref="Global_HL7_Error_Handler"/>
+
+    </flow>
+
+    <!-- FLOW 2: HL7 PARSING AND ROUTING -->
+
+    <sub-flow name="healthcare-hl7-routingFlow">
+
+        <ee:transform doc:name="Parse HL7">
+            <ee:message>
+                <ee:set-payload><![CDATA[
+%dw 2.0
+output application/json
+
+var raw = vars.originalHL7 as String
+
+var decoded =
+    if (trim(raw) startsWith "\"")
+        read(raw, "application/json") as String
+    else
+        raw
+
+var lines = decoded splitBy /\r\n|\n|\r/
+var msh = ((lines filter ($ startsWith "MSH|"))[0] default "") splitBy "|"
+var pid = ((lines filter ($ startsWith "PID|"))[0] default "") splitBy "|"
+var pv1 = ((lines filter ($ startsWith "PV1|"))[0] default "") splitBy "|"
+
+var patientName = (pid[5] default "") splitBy "^"
+var patientLocation = (pv1[3] default "") splitBy "^"
+var patientAddress = (pid[11] default "") splitBy "^"
+
+---
+{
+    messageId: msh[9] default "",
+    messageType: msh[8] default "",
+    eventType: ((msh[8] default "") splitBy "^")[1] default "",
+    eventTime: msh[6] default "",
+    version: msh[11] default "",
+
+    patientId: ((pid[3] default "") splitBy "^")[0],
+    mrn: ((pid[3] default "") splitBy "^")[0],
+
+    firstName: patientName[1] default "",
+    lastName: patientName[0] default "",
+    middleName: patientName[2] default "",
+
+    dateOfBirth: pid[7] default "",
+    gender: pid[8] default "",
+
+    addressLine1: patientAddress[0] default "",
+    city: patientAddress[2] default "",
+    state: patientAddress[3] default "",
+    postalCode: patientAddress[4] default "",
+    country: patientAddress[5] default "",
+
+    contactPhone: ((pid[13] default "") splitBy "^")[0],
+    maritalStatus: pid[16] default "",
+
+    encounterId: ((pv1[19] default "") splitBy "^")[0],
+
+    ward: patientLocation[0] default "",
+    room: patientLocation[1] default "",
+    bed: patientLocation[2] default "",
+    facility: patientLocation[3] default "",
+
+    patientClass: pv1[2] default "",
+    accountNumber: ((pid[18] default "") splitBy "^")[0]
+}
+                ]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+
+        <set-variable
+            variableName="hl7Data"
+            value="#[payload]"
+            doc:name="Store Parsed HL7"/>
+
+        <set-variable
+            variableName="ackCode"
+            value="AA"/>
+
+        <set-variable
+            variableName="ackReason"
+            value=""/>
+
+        <set-variable
+            variableName="duplicateMessage"
+            value="#[false]"/>
+
+        <set-variable
+            variableName="identityConflict"
+            value="#[false]"/>
+
+        <set-variable
+            variableName="identityConflictReason"
+            value=""/>
+
+        <set-variable
+            variableName="eventApplied"
+            value="#[false]"/>
+
+        <logger
+            level="INFO"
+            message="#['Processing HL7 event: ' ++ (vars.hl7Data.eventType as String) ++ ', Message ID: ' ++ (vars.hl7Data.messageId as String)]"/>
+
+        <!-- HL7 VERSION VALIDATION -->
+
+        <set-variable
+            variableName="supportedVersion"
+            doc:name="Check Supported HL7 Version"
+            value="#[(vars.hl7Data.version default '') == '2.5']"/>
+
+        <!-- SUPPORTED EVENT VALIDATION -->
+
+        <set-variable
+            variableName="supportedEvent"
+            doc:name="Check Supported HL7 Event"
+            value="#[vars.hl7Data.eventType == 'A01' or vars.hl7Data.eventType == 'A02' or vars.hl7Data.eventType == 'A03' or vars.hl7Data.eventType == 'A08']"/>
+
+        <!-- VALIDATE HL7 BEFORE DATABASE PROCESSING -->
+
+        <choice doc:name="Validate HL7">
+
+            <when expression="#[vars.supportedVersion != true or isEmpty(vars.hl7Data.messageId default '') or isEmpty(vars.hl7Data.patientId default '') or isEmpty(vars.hl7Data.eventTime default '') or vars.supportedEvent != true or (vars.hl7Data.eventType != 'A08' and isEmpty(vars.hl7Data.encounterId default ''))]">
+
+                <set-variable
+                    variableName="ackCode"
+                    value="AR"/>
+
+                <set-variable
+                    variableName="ackReason"
+                    value="#[if (vars.supportedVersion != true) 'Unsupported HL7 version: ' ++ ((vars.hl7Data.version default 'MISSING') as String) else if (isEmpty(vars.hl7Data.messageId default '')) 'Missing Message ID' else if (isEmpty(vars.hl7Data.patientId default '')) 'Missing Patient ID' else if (isEmpty(vars.hl7Data.eventTime default '')) 'Missing Event Timestamp' else if (vars.supportedEvent != true) 'Unsupported HL7 event' else 'Missing Encounter ID']"/>
+
+                <logger
+                    level="WARN"
+                    doc:name="Log HL7 Validation Failure"
+                    message="#['HL7 validation failed: ' ++ (vars.ackReason as String)]"/>
+
+            </when>
+
+            <otherwise>
+
+                <!-- DUPLICATE MESSAGE CHECK -->
+
+                <db:select
+                    config-ref="Database_Config"
+                    target="duplicateResult"
+                    doc:name="Check Duplicate">
+
+                    <db:sql><![CDATA[
+SELECT message_id
+FROM processed_messages
+WHERE message_id = :messageId
+                    ]]></db:sql>
+
+                    <db:input-parameters><![CDATA[#[{
+    messageId: vars.hl7Data.messageId
+}]]]></db:input-parameters>
+
+                </db:select>
+
+                <choice doc:name="Duplicate Message Routing">
+
+                    <when expression="#[sizeOf(vars.duplicateResult default []) > 0]">
+
+                        <set-variable
+                            variableName="duplicateMessage"
+                            value="#[true]"/>
+
+                        <logger
+                            level="INFO"
+                            message="Duplicate HL7 message skipped"/>
+
+                    </when>
+
+                    <otherwise>
+
+                        <!-- HL7 EVENT ROUTING -->
+
+                        <choice doc:name="HL7 Event Routing">
+
+                            <!-- A01 ADMISSION -->
+
+                            <when expression="#[vars.hl7Data.eventType == 'A01']">
+
+                                <flow-ref
+                                    name="upsert-patient"
+                                    doc:name="Validate and Upsert Patient"/>
+
+                                <choice doc:name="Check Identity Before Admission">
+
+                                    <when expression="#[vars.identityConflict default false]">
+
+                                        <set-variable
+                                            variableName="eventApplied"
+                                            value="#[false]"/>
+
+                                        <logger
+                                            level="WARN"
+                                            message="A01 admission blocked due to identity conflict"/>
+
+                                    </when>
+
+                                    <otherwise>
+
+                                        <db:insert
+                                            config-ref="Database_Config"
+                                            doc:name="Insert Admission">
+
+                                            <db:sql><![CDATA[
+INSERT INTO encounters
+(
+    encounter_id,
+    patient_id,
+    admission_date,
+    ward,
+    room,
+    bed,
+    status,
+    last_event_time,
+    account_number,
+    patient_class,
+    facility
+)
+VALUES
+(
+    :encounterId,
+    :patientId,
+    STR_TO_DATE(:eventTime, '%Y%m%d%H%i%s'),
+    :ward,
+    :room,
+    :bed,
+    'ADMITTED',
+    STR_TO_DATE(:eventTime, '%Y%m%d%H%i%s'),
+    NULLIF(:accountNumber, ''),
+    NULLIF(:patientClass, ''),
+    NULLIF(:facility, '')
+)
+ON DUPLICATE KEY UPDATE
+    ward = IF(
+        status = 'ADMITTED'
+        AND (
+            last_event_time IS NULL
+            OR last_event_time <= VALUES(last_event_time)
+        ),
+        VALUES(ward),
+        ward
+    ),
+    room = IF(
+        status = 'ADMITTED'
+        AND (
+            last_event_time IS NULL
+            OR last_event_time <= VALUES(last_event_time)
+        ),
+        VALUES(room),
+        room
+    ),
+    bed = IF(
+        status = 'ADMITTED'
+        AND (
+            last_event_time IS NULL
+            OR last_event_time <= VALUES(last_event_time)
+        ),
+        VALUES(bed),
+        bed
+    ),
+    account_number = COALESCE(
+        VALUES(account_number),
+        account_number
+    ),
+    patient_class = COALESCE(
+        VALUES(patient_class),
+        patient_class
+    ),
+    facility = COALESCE(
+        VALUES(facility),
+        facility
+    ),
+    last_event_time = GREATEST(
+        COALESCE(last_event_time, VALUES(last_event_time)),
+        VALUES(last_event_time)
+    )
+                                            ]]></db:sql>
+
+                                            <db:input-parameters><![CDATA[#[{
+    encounterId: vars.hl7Data.encounterId,
+    patientId: vars.hl7Data.patientId,
+    eventTime: vars.hl7Data.eventTime,
+    ward: vars.hl7Data.ward,
+    room: vars.hl7Data.room,
+    bed: vars.hl7Data.bed,
+    accountNumber: vars.hl7Data.accountNumber,
+    patientClass: vars.hl7Data.patientClass,
+    facility: vars.hl7Data.facility
+}]]]></db:input-parameters>
+
+                                        </db:insert>
+
+                                        <set-variable
+                                            variableName="eventApplied"
+                                            value="#[true]"/>
+
+                                        <logger
+                                            level="INFO"
+                                            message="A01 admission processed"/>
+
+                                    </otherwise>
+
+                                </choice>
+
+                            </when>
+
+                            <!-- A02 TRANSFER -->
+
+                            <when expression="#[vars.hl7Data.eventType == 'A02']">
+
+                                <db:update
+                                    config-ref="Database_Config"
+                                    target="eventUpdateResult"
+                                    targetValue="#[payload]"
+                                    doc:name="Transfer Patient">
+
+                                    <db:sql><![CDATA[
+UPDATE encounters
+SET
+    ward = :ward,
+    room = :room,
+    bed = :bed,
+    last_event_time =
+        STR_TO_DATE(:eventTime, '%Y%m%d%H%i%s')
+WHERE encounter_id = :encounterId
+  AND patient_id = :patientId
+  AND status = 'ADMITTED'
+  AND (
+      last_event_time IS NULL
+      OR last_event_time <
+          STR_TO_DATE(:eventTime, '%Y%m%d%H%i%s')
+  )
+                                    ]]></db:sql>
+
+                                    <db:input-parameters><![CDATA[#[{
+    encounterId: vars.hl7Data.encounterId,
+    patientId: vars.hl7Data.patientId,
+    ward: vars.hl7Data.ward,
+    room: vars.hl7Data.room,
+    bed: vars.hl7Data.bed,
+    eventTime: vars.hl7Data.eventTime
+}]]]></db:input-parameters>
+
+                                </db:update>
+
+                                <set-variable
+                                    variableName="eventApplied"
+                                    doc:name="Check Transfer Update Result"
+                                    value="#[if (vars.eventUpdateResult is Number) vars.eventUpdateResult > 0 else (vars.eventUpdateResult.affectedRows default 0) > 0]"/>
+
+                                <logger
+                                    level="INFO"
+                                    message="#['A02 transfer applied: ' ++ ((vars.eventApplied default false) as String)]"/>
+
+                            </when>
+
+                            <!-- A03 DISCHARGE -->
+
+                            <when expression="#[vars.hl7Data.eventType == 'A03']">
+
+                                <db:update
+                                    config-ref="Database_Config"
+                                    target="eventUpdateResult"
+                                    targetValue="#[payload]"
+                                    doc:name="Discharge Patient">
+
+                                    <db:sql><![CDATA[
+UPDATE encounters
+SET
+    status = 'DISCHARGED',
+    discharge_date =
+        STR_TO_DATE(:eventTime, '%Y%m%d%H%i%s'),
+    last_event_time =
+        STR_TO_DATE(:eventTime, '%Y%m%d%H%i%s')
+WHERE encounter_id = :encounterId
+  AND patient_id = :patientId
+  AND status = 'ADMITTED'
+  AND (
+      last_event_time IS NULL
+      OR last_event_time <
+          STR_TO_DATE(:eventTime, '%Y%m%d%H%i%s')
+  )
+                                    ]]></db:sql>
+
+                                    <db:input-parameters><![CDATA[#[{
+    encounterId: vars.hl7Data.encounterId,
+    patientId: vars.hl7Data.patientId,
+    eventTime: vars.hl7Data.eventTime
+}]]]></db:input-parameters>
+
+                                </db:update>
+
+                                <set-variable
+                                    variableName="dischargeRowsUpdated"
+                                    doc:name="Check Discharge Update Result"
+                                    value="#[if (vars.eventUpdateResult is Number) vars.eventUpdateResult > 0 else (vars.eventUpdateResult.affectedRows default 0) > 0]"/>
+
+                                <!-- VERIFY DISCHARGE IN TIDB -->
+
+                                <db:select
+                                    config-ref="Database_Config"
+                                    target="encounterVerification"
+                                    doc:name="Verify Discharge in TiDB">
+
+                                    <db:sql><![CDATA[
+SELECT
+    encounter_id,
+    patient_id,
+    status,
+    DATE_FORMAT(
+        last_event_time,
+        '%Y%m%d%H%i%s'
+    ) AS event_time_text,
+    DATE_FORMAT(
+        discharge_date,
+        '%Y%m%d%H%i%s'
+    ) AS discharge_time_text
+FROM encounters
+WHERE encounter_id = :encounterId
+  AND patient_id = :patientId
+                                    ]]></db:sql>
+
+                                    <db:input-parameters><![CDATA[#[{
+    encounterId: vars.hl7Data.encounterId,
+    patientId: vars.hl7Data.patientId
+}]]]></db:input-parameters>
+
+                                </db:select>
+
+                                <set-variable
+                                    variableName="eventApplied"
+                                    doc:name="Verify Discharge"
+                                    value="#[%dw 2.0 output application/java --- sizeOf(vars.encounterVerification default []) > 0 and (vars.encounterVerification[0].status default '') == 'DISCHARGED' and (vars.encounterVerification[0].event_time_text default '') == vars.hl7Data.eventTime and (vars.encounterVerification[0].discharge_time_text default '') == vars.hl7Data.eventTime]"/>
+
+                                <logger
+                                    level="INFO"
+                                    message="#['A03 discharge verified: ' ++ ((vars.eventApplied default false) as String)]"/>
+
+                            </when>
+
+                            <!-- A08 PATIENT UPDATE -->
+
+                            <when expression="#[vars.hl7Data.eventType == 'A08']">
+
+                                <flow-ref
+                                    name="upsert-patient"
+                                    doc:name="Validate and Update Patient"/>
+
+                                <choice doc:name="Verify A08 Identity">
+
+                                    <when expression="#[vars.identityConflict default false]">
+
+                                        <set-variable
+                                            variableName="eventApplied"
+                                            value="#[false]"/>
+
+                                        <logger
+                                            level="WARN"
+                                            message="A08 update blocked due to patient identity conflict"/>
+
+                                    </when>
+
+                                    <otherwise>
+
+                                        <set-variable
+                                            variableName="eventApplied"
+                                            value="#[true]"/>
+
+                                        <logger
+                                            level="INFO"
+                                            message="A08 patient update processed"/>
+
+                                    </otherwise>
+
+                                </choice>
+
+                            </when>
+
+                            <!-- UNSUPPORTED EVENT -->
+
+                            <otherwise>
+
+                                <set-variable
+                                    variableName="eventApplied"
+                                    value="#[false]"/>
+
+                                <logger
+                                    level="WARN"
+                                    message="Unsupported HL7 event blocked"/>
+
+                            </otherwise>
+
+                        </choice>
+
+                        <!-- VERIFY EVENT PROCESSING -->
+
+                        <choice doc:name="Verify Event Processing">
+
+                            <when expression="#[not vars.eventApplied]">
+
+                                <set-variable
+                                    variableName="ackCode"
+                                    value="AE"/>
+
+                                
+<set-variable
+    variableName="ackReason"
+    doc:name="Set Event Failure Reason"
+    value="#[%dw 2.0
+output application/java
+---
+if (vars.identityConflict default false)
+    (vars.identityConflictReason default 'Patient identity conflict')
+else if (vars.hl7Data.eventType == 'A02')
+    'Transfer not applied: encounter missing, discharged, or event outdated'
+else if (vars.hl7Data.eventType == 'A03')
+    'Discharge not applied: encounter missing, mismatched discharge timestamp, or event outdated'
+else
+    'HL7 event could not be applied']"/>
+                                
+
+                                <logger
+                                    level="WARN"
+                                    message="#['Event failed: ' ++ ((vars.ackReason default '') as String)]"/>
+
+                            </when>
+
+                            <otherwise>
+
+                                <!-- PUBLISH TO LAVINMQ -->
+
+                                <amqp:publish
+                                    config-ref="AMQP_Config"
+                                    exchangeName="#['']"
+                                    doc:name="Publish Clinical Event to LavinMQ">
+
+                                    <amqp:routing-keys>
+                                        <amqp:routing-key
+                                            value='#["hospital.hl7.events"]'/>
+                                    </amqp:routing-keys>
+
+                                    <amqp:message>
+                                        <amqp:body><![CDATA[#[output application/json
+---
+{
+    messageId: vars.hl7Data.messageId,
+    eventType: vars.hl7Data.eventType,
+    patientId: vars.hl7Data.patientId,
+    encounterId: vars.hl7Data.encounterId,
+    status: "PROCESSED"
+}]]]></amqp:body>
+                                    </amqp:message>
+
+                                </amqp:publish>
+
+                                <!-- RECORD PROCESSED MESSAGE -->
+
+                                <db:insert
+                                    config-ref="Database_Config"
+                                    doc:name="Record Processed Message">
+
+                                    <db:sql><![CDATA[
+INSERT INTO processed_messages
+(
+    message_id,
+    event_type,
+    patient_id,
+    file_name,
+    message_type,
+    mrn,
+    processing_status,
+    ack_code,
+    correlation_id
+)
+VALUES
+(
+    :messageId,
+    :eventType,
+    :patientId,
+    :fileName,
+    :messageType,
+    :mrn,
+    'PROCESSED',
+    'AA',
+    :messageId
+)
+                                    ]]></db:sql>
+
+                                    <db:input-parameters><![CDATA[#[{
+    messageId: vars.hl7Data.messageId,
+    eventType: vars.hl7Data.eventType,
+    patientId: vars.hl7Data.patientId,
+    fileName: vars.hl7FileName,
+    messageType: vars.hl7Data.messageType,
+    mrn: vars.hl7Data.mrn
+}]]]></db:input-parameters>
+
+                                </db:insert>
+
+                                <logger
+                                    level="INFO"
+                                    message="HL7 message recorded in TiDB"/>
+
+                            </otherwise>
+
+                        </choice>
+
+                    </otherwise>
+
+                </choice>
+
+            </otherwise>
+
+        </choice>
+
+        <!-- ACK AND ARCHIVE OR QUARANTINE -->
+
+        <choice doc:name="Handle Duplicate or New Message">
+
+            <!-- DUPLICATE HANDLING -->
+
+            <when expression="#[vars.duplicateMessage]">
+
+                <logger
+                    level="INFO"
+                    message="#['Duplicate HL7 skipped; messageId=' ++ (vars.hl7Data.messageId as String)]"/>
+
+                <s3:put-object
+                    config-ref="Amazon_S3_Configuration"
+                    bucketName="${aws.bucket}"
+                    key='#["duplicates/" ++ uuid() ++ "_" ++ vars.hl7FileName]'
+                    doc:name="Archive Duplicate HL7">
+                    <s3:content><![CDATA[#[vars.originalHL7 as Binary]]]></s3:content>
+                </s3:put-object>
+
+                <db:insert
+                    config-ref="Database_Config"
+                    doc:name="Record Duplicate Attempt">
+
+                    <db:sql><![CDATA[
+INSERT INTO duplicate_attempts
+(
+    message_id,
+    file_name
+)
+VALUES
+(
+    :messageId,
+    :fileName
+)
+                    ]]></db:sql>
+
+                    <db:input-parameters><![CDATA[#[{
+    messageId: vars.hl7Data.messageId,
+    fileName: vars.hl7FileName
+}]]]></db:input-parameters>
+
+                </db:insert>
+
+                <set-variable
+                    variableName="ackCode"
+                    value="AA"/>
+
+                <set-variable
+                    variableName="ackReason"
+                    value="Duplicate message already processed"/>
+
+                <flow-ref
+                    name="generate-hl7-ack"
+                    doc:name="Generate Duplicate ACK"/>
+
+            </when>
+
+            <!-- NORMAL MESSAGE -->
+
+            <otherwise>
+
+                <flow-ref
+                    name="generate-hl7-ack"
+                    doc:name="Generate HL7 ACK"/>
+
+                <choice doc:name="Archive or Quarantine">
+
+                    <when expression="#[vars.ackCode == 'AA']">
+
+                        <s3:put-object
+                            config-ref="Amazon_S3_Configuration"
+                            bucketName="${aws.bucket}"
+                            key='#["archive/" ++ uuid() ++ "_" ++ vars.hl7FileName]'
+                            doc:name="Archive HL7 Message">
+                            <s3:content><![CDATA[#[vars.originalHL7 as Binary]]]></s3:content>
+                        </s3:put-object>
+
+                        <logger
+                            level="INFO"
+                            message="HL7 message archived"/>
+
+                    </when>
+
+                    <otherwise>
+
+                        <!-- QUARANTINE INVALID MESSAGE -->
+
+                        <s3:put-object
+                            config-ref="Amazon_S3_Configuration"
+                            bucketName="${aws.bucket}"
+                            key='#["quarantine/" ++ uuid() ++ "_" ++ vars.hl7FileName]'
+                            doc:name="Quarantine HL7 Message">
+                            <s3:content><![CDATA[#[vars.originalHL7 as Binary]]]></s3:content>
+                        </s3:put-object>
+
+                        <!-- RECORD QUARANTINED MESSAGE -->
+
+                        <db:insert
+                            config-ref="Database_Config"
+                            doc:name="Record Quarantined Message">
+
+                            <db:sql><![CDATA[
+INSERT INTO processed_messages
+(
+    message_id,
+    event_type,
+    patient_id,
+    file_name,
+    message_type,
+    mrn,
+    processing_status,
+    ack_code,
+    correlation_id
+)
+VALUES
+(
+    :messageId,
+    :eventType,
+    :patientId,
+    :fileName,
+    :messageType,
+    :mrn,
+    'QUARANTINED',
+    :ackCode,
+    :correlationId
+)
+ON DUPLICATE KEY UPDATE
+    processing_status = 'QUARANTINED',
+    ack_code = VALUES(ack_code)
+                            ]]></db:sql>
+
+                            <db:input-parameters><![CDATA[#[{
+    messageId: vars.hl7Data.messageId default "",
+    eventType: vars.hl7Data.eventType default "",
+    patientId: vars.hl7Data.patientId default "",
+    fileName: vars.hl7FileName default "",
+    messageType: vars.hl7Data.messageType default "",
+    mrn: vars.hl7Data.mrn default "",
+    ackCode: vars.ackCode default "AR",
+    correlationId: vars.hl7Data.messageId default ""
+}]]]></db:input-parameters>
+
+                        </db:insert>
+
+                        <logger
+                            level="WARN"
+                            message="#['HL7 message quarantined: ' ++ ((vars.ackReason default 'Unknown reason') as String)]"/>
+
+                    </otherwise>
+
+                </choice>
+
+            </otherwise>
+
+        </choice>
+
+    </sub-flow>
+
+    <!-- FLOW 3: PATIENT UPSERT WITH NS08 VALIDATION -->
+
+    <sub-flow name="upsert-patient">
+
+        <!-- FIND EXISTING PATIENT -->
+
+        <db:select
+            config-ref="Database_Config"
+            target="existingPatient"
+            doc:name="Find Existing Patient Identity">
+
+            <db:sql><![CDATA[
+SELECT
+    patient_id,
+    first_name,
+    last_name,
+    DATE_FORMAT(date_of_birth, '%Y%m%d') AS dob_text,
+    gender
+FROM patients
+WHERE patient_id = :patientId
+            ]]></db:sql>
+
+            <db:input-parameters><![CDATA[#[{
+    patientId: vars.hl7Data.patientId
+}]]]></db:input-parameters>
+
+        </db:select>
+
+        <!-- DETECT CONFLICT IN DOB OR GENDER -->
+
+        <set-variable
+            variableName="identityConflict"
+            doc:name="Detect Patient Identity Conflict"
+            value="#[%dw 2.0
+output application/java
+var existing = (vars.existingPatient default [])[0] default {}
+var storedDob = (existing.dob_text default '') as String
+var incomingDob = (vars.hl7Data.dateOfBirth default '') as String
+var storedGender = upper((existing.gender default '') as String)
+var incomingGender = upper((vars.hl7Data.gender default '') as String)
+---
+sizeOf(vars.existingPatient default []) > 0
+and (
+    (
+        storedDob != ''
+        and incomingDob != ''
+        and storedDob != incomingDob
+    )
+    or
+    (
+        storedGender != ''
+        and incomingGender != ''
+        and storedGender != incomingGender
+    )
+)]"/>
+
+        <choice doc:name="NS08 Identity Conflict Validation">
+
+            <!-- CONFLICT: DO NOT UPDATE PATIENT -->
+
+            <when expression="#[vars.identityConflict == true]">
+
+                <set-variable
+                    variableName="eventApplied"
+                    value="#[false]"
+                    doc:name="Block Conflicting Identity"/>
+
+                <set-variable
+                    variableName="identityConflictReason"
+                    value="Patient identity conflict: date of birth or gender does not match existing MRN"
+                    doc:name="Store Conflict Reason"/>
+
+                <logger
+                    level="WARN"
+                    doc:name="Log Identity Conflict"
+                    message="#['Patient identity conflict rejected; messageId=' ++ (vars.hl7Data.messageId as String)]"/>
+
+            </when>
+
+            <!-- NO CONFLICT: UPSERT PATIENT -->
+
+            <otherwise>
+
+                <db:insert
+                    config-ref="Database_Config"
+                    doc:name="Insert or Update Patient">
+
+                    <db:sql><![CDATA[
+INSERT INTO patients
+(
+    patient_id,
+    patient_key,
+    mrn,
+    first_name,
+    last_name,
+    middle_name,
+    date_of_birth,
+    gender,
+    address_line1,
+    city,
+    state,
+    postal_code,
+    country,
+    contact_phone,
+    marital_status,
+    last_msg_datetime,
+    last_control_id
+)
+VALUES
+(
+    :patientId,
+    :patientKey,
+    :mrn,
+    :firstName,
+    :lastName,
+    NULLIF(:middleName, ''),
+    STR_TO_DATE(NULLIF(:dob, ''), '%Y%m%d'),
+    :gender,
+    NULLIF(:addressLine1, ''),
+    NULLIF(:city, ''),
+    NULLIF(:state, ''),
+    NULLIF(:postalCode, ''),
+    NULLIF(:country, ''),
+    NULLIF(:contactPhone, ''),
+    NULLIF(:maritalStatus, ''),
+    STR_TO_DATE(:eventTime, '%Y%m%d%H%i%s'),
+    :messageId
+)
+ON DUPLICATE KEY UPDATE
+
+    first_name = IF(
+        last_msg_datetime IS NULL
+        OR last_msg_datetime <= VALUES(last_msg_datetime),
+        VALUES(first_name),
+        first_name
+    ),
+
+    last_name = IF(
+        last_msg_datetime IS NULL
+        OR last_msg_datetime <= VALUES(last_msg_datetime),
+        VALUES(last_name),
+        last_name
+    ),
+
+    middle_name = IF(
+        last_msg_datetime IS NULL
+        OR last_msg_datetime <= VALUES(last_msg_datetime),
+        COALESCE(VALUES(middle_name), middle_name),
+        middle_name
+    ),
+
+    date_of_birth = IF(
+        last_msg_datetime IS NULL
+        OR last_msg_datetime <= VALUES(last_msg_datetime),
+        COALESCE(VALUES(date_of_birth), date_of_birth),
+        date_of_birth
+    ),
+
+    gender = IF(
+        last_msg_datetime IS NULL
+        OR last_msg_datetime <= VALUES(last_msg_datetime),
+        COALESCE(NULLIF(VALUES(gender), ''), gender),
+        gender
+    ),
+
+    address_line1 = IF(
+        last_msg_datetime IS NULL
+        OR last_msg_datetime <= VALUES(last_msg_datetime),
+        COALESCE(VALUES(address_line1), address_line1),
+        address_line1
+    ),
+
+    city = IF(
+        last_msg_datetime IS NULL
+        OR last_msg_datetime <= VALUES(last_msg_datetime),
+        COALESCE(VALUES(city), city),
+        city
+    ),
+
+    state = IF(
+        last_msg_datetime IS NULL
+        OR last_msg_datetime <= VALUES(last_msg_datetime),
+        COALESCE(VALUES(state), state),
+        state
+    ),
+
+    postal_code = IF(
+        last_msg_datetime IS NULL
+        OR last_msg_datetime <= VALUES(last_msg_datetime),
+        COALESCE(VALUES(postal_code), postal_code),
+        postal_code
+    ),
+
+    country = IF(
+        last_msg_datetime IS NULL
+        OR last_msg_datetime <= VALUES(last_msg_datetime),
+        COALESCE(VALUES(country), country),
+        country
+    ),
+
+    contact_phone = IF(
+        last_msg_datetime IS NULL
+        OR last_msg_datetime <= VALUES(last_msg_datetime),
+        COALESCE(VALUES(contact_phone), contact_phone),
+        contact_phone
+    ),
+
+    marital_status = IF(
+        last_msg_datetime IS NULL
+        OR last_msg_datetime <= VALUES(last_msg_datetime),
+        COALESCE(VALUES(marital_status), marital_status),
+        marital_status
+    ),
+
+    last_control_id = IF(
+        last_msg_datetime IS NULL
+        OR last_msg_datetime <= VALUES(last_msg_datetime),
+        VALUES(last_control_id),
+        last_control_id
+    ),
+
+    last_msg_datetime = GREATEST(
+        COALESCE(last_msg_datetime, VALUES(last_msg_datetime)),
+        VALUES(last_msg_datetime)
+    )
+                    ]]></db:sql>
+
+                    <db:input-parameters><![CDATA[#[{
+    patientId: vars.hl7Data.patientId,
+    patientKey: "PAT-" ++ vars.hl7Data.patientId,
+    mrn: vars.hl7Data.mrn,
+    firstName: vars.hl7Data.firstName,
+    lastName: vars.hl7Data.lastName,
+    middleName: vars.hl7Data.middleName,
+    dob: vars.hl7Data.dateOfBirth,
+    gender: vars.hl7Data.gender,
+    addressLine1: vars.hl7Data.addressLine1,
+    city: vars.hl7Data.city,
+    state: vars.hl7Data.state,
+    postalCode: vars.hl7Data.postalCode,
+    country: vars.hl7Data.country,
+    contactPhone: vars.hl7Data.contactPhone,
+    maritalStatus: vars.hl7Data.maritalStatus,
+    eventTime: vars.hl7Data.eventTime,
+    messageId: vars.hl7Data.messageId
+}]]]></db:input-parameters>
+
+                </db:insert>
+
+                <logger
+                    level="INFO"
+                    message="#['Patient upsert completed; messageId=' ++ (vars.hl7Data.messageId as String)]"/>
+
+            </otherwise>
+
+        </choice>
+
+    </sub-flow>
+
+    <!-- FLOW 4: GENERATE HL7 ACK -->
+
+    <sub-flow name="generate-hl7-ack">
+
+        <ee:transform doc:name="Generate Detailed HL7 ACK">
+            <ee:message>
+                <ee:set-payload><![CDATA[
+%dw 2.0
+output text/plain
+
+var timestamp = now() as String {
+    format: "yyyyMMddHHmmss"
+}
+
+var code = vars.ackCode default "AE"
+var reason = (vars.ackReason default "") as String
+
+var safeReason =
+    reason replace /[\r\n|]/ with " "
+
+---
+"MSH|^~\\&|MULESOFT|HL7_ROUTER|HOSPITAL|SENDER|"
+++ timestamp
+++ "||ACK^"
+++ (vars.hl7Data.eventType default "A01")
+++ "|"
+++ uuid()
+++ "|P|2.5\r"
+++ "MSA|"
+++ code
+++ "|"
+++ (vars.hl7Data.messageId default "UNKNOWN")
+++ (
+    if (isEmpty(safeReason))
+        ""
+    else
+        "|" ++ safeReason
+)
+++ "\r"
+                ]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+
+        <s3:put-object
+            config-ref="Amazon_S3_Configuration"
+            bucketName="${aws.bucket}"
+            key='#["acknowledgements/ACK_" ++ uuid() ++ ".hl7"]'
+            doc:name="Store HL7 ACK in S3">
+            <s3:content><![CDATA[#[payload as Binary]]]></s3:content>
+        </s3:put-object>
+
+        <logger
+            level="INFO"
+            doc:name="ACK Generated"
+            message="#['HL7 ACK generated in S3. Code: ' ++ ((vars.ackCode default 'AE') as String)]"/>
+
+    </sub-flow>
+
+</mule>

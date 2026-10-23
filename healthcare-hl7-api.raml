@@ -1,0 +1,467 @@
+#%RAML 1.0
+title: Healthcare HL7 Message Routing API
+version: v1
+baseUri: http://localhost:8081/api
+mediaType: application/json
+protocols: [ HTTP, HTTPS ]
+
+description: |
+  Cognizant NPN Healthcare HL7 ADT routing API contract.
+
+  HL7 file watching, database transactions, queue delivery,
+  acknowledgement file writing, quarantine and retries are
+  implemented by Mule flows, not by this RAML.
+
+  Do not expose patient health information (PHI) in logs
+  or public error messages.
+
+  Supported ADT triggers:
+  A01 - Patient Admission
+  A02 - Patient Transfer
+  A03 - Patient Discharge
+  A08 - Patient Information Update
+
+documentation:
+  - title: Functional Requirements Coverage
+    content: |
+      FR01 Directory Watcher:
+      Monitor incoming HL7 files and move them to processing.
+
+      FR02 HL7 Parsing:
+      Parse MSH, EVN, PID, PV1 and optional NK1/AL1 segments.
+
+      FR03 Structural Validation:
+      Validate MSH, separators, supported HL7 version,
+      event type and required segments.
+
+      FR04 Event Type Routing:
+      Support A01, A02, A03 and A08.
+
+      FR05 Patient Identity Resolution:
+      Identify patients using the medical record number (MRN).
+
+      FR06 Message Ordering:
+      Prevent older messages from overwriting newer information.
+
+      FR07 Duplicate Detection:
+      Use MSH-10 message control ID to detect duplicates.
+
+      FR08 Encounter Persistence:
+      Create or update patient encounters.
+      A03 closes an existing open encounter.
+
+      FR09 Queue Publishing:
+      Publish normalized clinical events once per applied message.
+
+      FR10 HL7 Acknowledgement:
+      Generate AA, AE or AR acknowledgements.
+
+      FR11 Protected Information:
+      Prevent patient information from appearing in logs
+      and error messages.
+
+      FR12 Error Handling:
+      Implement retries, quarantine and meaningful error reasons.
+
+      FR13 Monitoring:
+      Track processing status and operational metrics.
+
+      FR14 MUnit Testing:
+      Test supported events and negative scenarios.
+
+  - title: Negative Scenarios
+    content: |
+      NS01 Malformed MSH or invalid HL7 message.
+      NS02 Missing PID, MRN or PV1.
+      NS03 Unsupported event type.
+      NS04 Unsupported HL7 version.
+      NS05 Duplicate message control ID.
+      NS06 Older or out-of-order message.
+      NS07 Discharge without an open admission.
+      NS08 Conflicting patient identity.
+      NS09 Partially written inbound file.
+      NS10 Empty or zero-byte HL7 file.
+      NS11 Database connection failure.
+      NS12 Queue publishing failure.
+      NS13 Protected information leakage.
+      NS14 Unexpected processing exception.
+      NS15 Invalid timestamps, separators and field values.
+
+      These scenarios require Mule implementation
+      and MUnit tests.
+
+types:
+
+  ErrorResponse:
+    type: object
+    additionalProperties: false
+    properties:
+      code: string
+      message: string
+      correlationId?: string
+      messageControlId?: string
+      field?: string
+      retryable?: boolean
+
+  HealthResponse:
+    type: object
+    properties:
+      status:
+        type: string
+        enum: [ UP, DEGRADED, DOWN ]
+      application: string
+
+  HL7MessageRequest:
+    type: object
+    additionalProperties: false
+    properties:
+      messageId: string
+      hl7Message: string
+      sourceFileName?: string
+    example:
+      messageId: MSG0101
+      hl7Message: "MSH|^~\\&|HIS|HOSPITAL|MULE|HUB|20260911131505||ADT^A01|MSG0101|P|2.5\rEVN|A01|20260911131500\rPID|1||MRN0101^^^HOSPITAL^MR||TEST^PATIENT\rPV1|1|I|WARD1^101^A"
+      sourceFileName: ADT_A01_20260911_0101.hl7
+
+  ProcessingResponse:
+    type: object
+    properties:
+      messageId: string
+      status:
+        type: string
+        enum:
+          - ACCEPTED
+          - QUEUED
+          - APPLIED
+          - DUPLICATE
+          - SUPERSEDED
+          - REJECTED
+          - QUARANTINED
+          - RETRY_PENDING
+      eventType?: string
+      acknowledgementCode?:
+        type: string
+        enum: [ AA, AE, AR ]
+      patientId?: string
+      encounterId?: string
+      correlationId?: string
+      s3ObjectKey?: string
+      message?: string
+
+  MessageStatus:
+    type: object
+    properties:
+      messageId: string
+      processingStatus?: string
+      status?:
+        type: string
+        enum:
+          - RECEIVED
+          - PROCESSING
+          - PROCESSED
+          - APPLIED
+          - DUPLICATE
+          - SUPERSEDED
+          - REJECTED
+          - QUARANTINED
+          - RETRY_PENDING
+      eventType?: string
+      patientId?: string
+      acknowledgementCode?:
+        type: string
+        enum: [ AA, AE, AR ]
+      rejectReason?: string
+      correlationId?: string
+      processedAt?: datetime
+      messageType?: string
+      sendingFacility?: string
+      messageDateTime?: string
+      mrn?: string
+      fileName?: string
+
+  Patient:
+    type: object
+    properties:
+      patientId: string
+      patientKey?: string
+      mrn?: string
+      medicalRecordNumber?: string
+      firstName?: string
+      middleName?: string
+      lastName?: string
+      givenName?: string
+      familyName?: string
+      dateOfBirth?: string
+      gender?: string
+      address?: string
+      city?: string
+      state?: string
+      postalCode?: string
+    description: |
+      Patient information is sensitive.
+      Restrict API access and do not log response bodies.
+
+  Encounter:
+    type: object
+    properties:
+      encounterId: string
+      patientId: string
+      accountNumber?: string
+      patientClass?: string
+      facility?: string
+      ward?: string
+      room?: string
+      bed?: string
+      admissionDate?: string
+      dischargeDate?: string
+      lastEventTime?: string
+      status: string
+
+  Acknowledgement:
+    type: object
+    properties:
+      messageId: string
+      acknowledgementCode?:
+        type: string
+        enum: [ AA, AE, AR ]
+      eventType?: string
+      processingStatus?: string
+      processedAt?: string
+      rejectReason?: string
+      acknowledgementDescription?: string
+
+  MonitoringSummary:
+    type: object
+    properties:
+      totalReceived: integer
+      processed: integer
+      quarantined: integer
+      duplicates: integer
+      processingFailures: integer
+      superseded: integer
+      unknownStatus: integer
+
+  ReplayRequest:
+    type: object
+    properties:
+      reason: string
+      requestedBy: string
+
+  ReplayResponse:
+    type: object
+    properties:
+      messageId: string
+      status:
+        type: string
+        enum: [ RETRY_PENDING, REPLAY_QUEUED ]
+      correlationId?: string
+
+traits:
+
+  standardErrors:
+    responses:
+
+      400:
+        description: Invalid request.
+        body:
+          application/json:
+            type: ErrorResponse
+
+      401:
+        description: Missing or invalid API key.
+        body:
+          application/json:
+            type: ErrorResponse
+
+      403:
+        description: Access denied.
+        body:
+          application/json:
+            type: ErrorResponse
+
+      404:
+        description: Resource not found.
+        body:
+          application/json:
+            type: ErrorResponse
+
+      409:
+        description: Duplicate or conflicting message.
+        body:
+          application/json:
+            type: ErrorResponse
+
+      422:
+        description: HL7 validation error.
+        body:
+          application/json:
+            type: ErrorResponse
+
+      429:
+        description: Too many requests.
+        body:
+          application/json:
+            type: ErrorResponse
+
+      500:
+        description: Internal server error.
+        body:
+          application/json:
+            type: ErrorResponse
+
+      503:
+        description: Database or queue service unavailable.
+        body:
+          application/json:
+            type: ErrorResponse
+
+/health:
+  get:
+    description: Check whether the Healthcare HL7 API is running.
+    responses:
+      200:
+        body:
+          application/json:
+            type: HealthResponse
+            example:
+              status: UP
+              application: Healthcare HL7 Message Routing API
+
+/hl7:
+  /messages:
+
+    post:
+      is: [ standardErrors ]
+      description: |
+        Submit an HL7 ADT message for processing.
+
+        Supported events:
+        A01 Admission
+        A02 Transfer
+        A03 Discharge
+        A08 Patient Update
+
+        The Mule application validates and uploads
+        the HL7 message to AWS S3.
+
+        HTTP 202 means accepted for processing,
+        not necessarily processed successfully.
+
+      body:
+        application/json:
+          type: HL7MessageRequest
+
+      responses:
+        202:
+          description: HL7 message accepted for processing.
+          body:
+            application/json:
+              type: ProcessingResponse
+
+        200:
+          description: Previously processed message.
+          body:
+            application/json:
+              type: ProcessingResponse
+
+    /{messageId}:
+      uriParameters:
+        messageId: string
+
+      get:
+        is: [ standardErrors ]
+        description: Get the processing status of an HL7 message.
+        responses:
+          200:
+            body:
+              application/json:
+                type: MessageStatus
+
+      /replay:
+        post:
+          is: [ standardErrors ]
+          description: |
+            Request authorized replay of a failed
+            or quarantined HL7 message.
+
+            Preserve the original message control ID
+            and prevent duplicate database updates.
+
+            This endpoint requires a separate Mule
+            implementation before it can be used.
+
+          body:
+            application/json:
+              type: ReplayRequest
+
+          responses:
+            202:
+              body:
+                application/json:
+                  type: ReplayResponse
+
+/patients:
+  /{patientId}:
+    uriParameters:
+      patientId: string
+
+    get:
+      is: [ standardErrors ]
+      description: |
+        Retrieve patient details from the database.
+        Requires authorization because patient
+        information is sensitive.
+
+      responses:
+        200:
+          body:
+            application/json:
+              type: Patient
+
+    /encounters:
+      get:
+        is: [ standardErrors ]
+        description: |
+          Retrieve all encounters belonging
+          to the selected patient.
+
+        responses:
+          200:
+            body:
+              application/json:
+                type: Encounter[]
+
+/acknowledgements:
+  /{messageId}:
+    uriParameters:
+      messageId: string
+
+    get:
+      is: [ standardErrors ]
+      description: |
+        Retrieve acknowledgement information
+        for an HL7 message.
+
+        AA - Application Accept
+        AE - Application Error
+        AR - Application Reject
+
+      responses:
+        200:
+          body:
+            application/json:
+              type: Acknowledgement
+
+/monitoring:
+  /summary:
+    get:
+      is: [ standardErrors ]
+      description: |
+        Retrieve HL7 processing statistics
+        without exposing patient information.
+
+      responses:
+        200:
+          body:
+            application/json:
+              type: MonitoringSummary

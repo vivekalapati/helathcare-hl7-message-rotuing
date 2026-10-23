@@ -1,0 +1,639 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:db="http://www.mulesoft.org/schema/mule/db"
+      xmlns:s3="http://www.mulesoft.org/schema/mule/s3"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+        http://www.mulesoft.org/schema/mule/s3 http://www.mulesoft.org/schema/mule/s3/current/mule-s3.xsd
+        http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+
+    <!-- HTTP CONFIGURATION -->
+
+    <http:listener-config name="healthcare-hl7-api-httpListenerConfig">
+        <http:listener-connection
+            host="0.0.0.0"
+            port="${http.port}"/>
+    </http:listener-config>
+
+    <!-- APIKIT CONFIGURATION -->
+
+    <apikit:config
+        name="healthcare-hl7-api-config"
+        api="healthcare-hl7-api.raml"
+        outboundHeadersMapName="outboundHeaders"
+        httpStatusVarName="httpStatus"/>
+
+    <!-- MAIN API AND API KEY AUTHENTICATION -->
+
+    <flow name="healthcare-hl7-api-main">
+
+        <http:listener
+            config-ref="healthcare-hl7-api-httpListenerConfig"
+            path="/api/*">
+
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
+            </http:response>
+
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body><![CDATA[#[payload]]]></http:body>
+                <http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
+            </http:error-response>
+
+        </http:listener>
+
+        <choice doc:name="API Key Authentication">
+
+            <when expression="#[((attributes.headers.'x-api-key' default '') as String) == p('api.security.key')]">
+                <apikit:router config-ref="healthcare-hl7-api-config"/>
+            </when>
+
+            <otherwise>
+                <set-payload
+                    doc:name="Unauthorized Response"
+                    value='#[output application/json --- {status: 401, error: "Unauthorized", message: "Invalid or missing API key"}]'/>
+                <set-variable
+                    variableName="httpStatus"
+                    value="#[401]"/>
+            </otherwise>
+
+        </choice>
+
+        <error-handler>
+
+            <on-error-propagate type="APIKIT:BAD_REQUEST">
+                <set-variable variableName="httpStatus" value="#[400]"/>
+                <set-payload value='#[{message: "Bad request"}]' mimeType="application/json"/>
+            </on-error-propagate>
+
+            <on-error-propagate type="APIKIT:NOT_FOUND">
+                <set-variable variableName="httpStatus" value="#[404]"/>
+                <set-payload value='#[{message: "Resource not found"}]' mimeType="application/json"/>
+            </on-error-propagate>
+
+            <on-error-propagate type="APIKIT:METHOD_NOT_ALLOWED">
+                <set-variable variableName="httpStatus" value="#[405]"/>
+                <set-payload value='#[{message: "Method not allowed"}]' mimeType="application/json"/>
+            </on-error-propagate>
+
+            <on-error-propagate type="APIKIT:NOT_ACCEPTABLE">
+                <set-variable variableName="httpStatus" value="#[406]"/>
+                <set-payload value='#[{message: "Not acceptable"}]' mimeType="application/json"/>
+            </on-error-propagate>
+
+            <on-error-propagate type="APIKIT:UNSUPPORTED_MEDIA_TYPE">
+                <set-variable variableName="httpStatus" value="#[415]"/>
+                <set-payload value='#[{message: "Unsupported media type"}]' mimeType="application/json"/>
+            </on-error-propagate>
+
+            <on-error-propagate type="APIKIT:NOT_IMPLEMENTED">
+                <set-variable variableName="httpStatus" value="#[501]"/>
+                <set-payload value='#[{message: "Not implemented"}]' mimeType="application/json"/>
+            </on-error-propagate>
+
+        </error-handler>
+
+    </flow>
+
+    <!-- API CONSOLE -->
+
+    <flow name="healthcare-hl7-api-console">
+
+        <http:listener
+            config-ref="healthcare-hl7-api-httpListenerConfig"
+            path="/console/*">
+
+            <http:response statusCode="#[vars.httpStatus default 200]">
+                <http:headers><![CDATA[#[vars.outboundHeaders default {}]]]></http:headers>
+            </http:response>
+
+            <http:error-response statusCode="#[vars.httpStatus default 500]">
+                <http:body><![CDATA[#[payload]]]></http:body>
+            </http:error-response>
+
+        </http:listener>
+
+        <apikit:console config-ref="healthcare-hl7-api-config"/>
+
+    </flow>
+
+    <!-- HEALTH CHECK -->
+
+    <flow name="get:\health:healthcare-hl7-api-config">
+
+        <ee:transform doc:name="Health Response">
+            <ee:message>
+                <ee:set-payload><![CDATA[
+%dw 2.0
+output application/json
+---
+{
+    status: "UP",
+    application: "Healthcare HL7 Message Routing API"
+}
+                ]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+
+    </flow>
+
+    <!-- MONITORING SUMMARY -->
+    <!-- FIX: COUNT QUARANTINED INSTEAD OF REJECTED -->
+
+    <flow name="get:\monitoring\summary:healthcare-hl7-api-config">
+
+        <db:select
+            doc:name="Get Monitoring Statistics"
+            config-ref="Database_Config">
+
+            <db:sql><![CDATA[
+SELECT
+    (SELECT COUNT(*) FROM processed_messages)
+    + (SELECT COUNT(*) FROM duplicate_attempts)
+        AS totalReceived,
+
+    (SELECT COUNT(*) FROM processed_messages
+     WHERE processing_status = 'PROCESSED')
+        AS processed,
+
+    (SELECT COUNT(*) FROM processed_messages
+     WHERE processing_status = 'QUARANTINED')
+        AS quarantined,
+
+    (SELECT COUNT(*) FROM duplicate_attempts)
+        AS duplicates,
+
+    (SELECT COUNT(*) FROM processed_messages
+     WHERE processing_status = 'FAILED')
+        AS processingFailures,
+
+    (SELECT COUNT(*) FROM processed_messages
+     WHERE processing_status = 'SUPERSEDED')
+        AS superseded,
+
+    (SELECT COUNT(*) FROM processed_messages
+     WHERE processing_status IS NULL)
+        AS unknownStatus
+            ]]></db:sql>
+
+        </db:select>
+
+        <ee:transform doc:name="Monitoring Response">
+            <ee:message>
+                <ee:set-payload><![CDATA[
+%dw 2.0
+output application/json
+var s = payload[0] default {}
+---
+{
+    totalReceived: (s.totalReceived default 0) as Number,
+    processed: (s.processed default 0) as Number,
+    quarantined: (s.quarantined default 0) as Number,
+    duplicates: (s.duplicates default 0) as Number,
+    processingFailures: (s.processingFailures default 0) as Number,
+    superseded: (s.superseded default 0) as Number,
+    unknownStatus: (s.unknownStatus default 0) as Number
+}
+                ]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+
+    </flow>
+
+    <!-- GET PATIENT DETAILS -->
+
+    <flow name="get:\patients\(patientId):healthcare-hl7-api-config">
+
+        <set-variable
+            doc:name="Store Patient ID"
+            variableName="patientId"
+            value="#[attributes.uriParams.'patientId']"/>
+
+        <db:select
+            doc:name="Get Patient From MySQL"
+            config-ref="Database_Config">
+
+            <db:sql><![CDATA[
+SELECT
+    patient_id,
+    patient_key,
+    mrn,
+    first_name,
+    middle_name,
+    last_name,
+    date_of_birth,
+    gender,
+    address_line1,
+    city,
+    state,
+    postal_code
+FROM patients
+WHERE patient_id = :patientId
+LIMIT 1
+            ]]></db:sql>
+
+            <db:input-parameters><![CDATA[#[{
+    patientId: vars.patientId
+}]]]></db:input-parameters>
+
+        </db:select>
+
+        <!-- LOG FIELD PRESENCE WITHOUT EXPOSING PATIENT DATA -->
+
+        <logger
+            level="INFO"
+            doc:name="Patient Query Diagnostics"
+            message='#[output text/plain --- "GET_PATIENT_DIAGNOSTIC rows=" ++ (sizeOf(payload) as String) ++ ", middleNamePresent=" ++ (((not isEmpty(payload)) and ((payload[0].middle_name default null) != null)) as String) ++ ", cityPresent=" ++ (((not isEmpty(payload)) and ((payload[0].city default null) != null)) as String)]'/>
+
+        <choice doc:name="Patient Found?">
+
+            <when expression="#[isEmpty(payload)]">
+
+                <set-variable variableName="httpStatus" value="#[404]"/>
+
+                <ee:transform doc:name="Patient Not Found">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[
+%dw 2.0
+output application/json
+---
+{
+    status: "NOT_FOUND",
+    message: "Patient not found",
+    patientId: vars.patientId
+}
+                        ]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+
+            </when>
+
+            <otherwise>
+
+                <ee:transform doc:name="Patient Details Response">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[
+%dw 2.0
+output application/json
+var p = payload[0] default {}
+---
+{
+    patientId: p.patient_id default null,
+    patientKey: p.patient_key default null,
+    mrn: p.mrn default null,
+    firstName: p.first_name default null,
+    middleName: p.middle_name default null,
+    lastName: p.last_name default null,
+    dateOfBirth: p.date_of_birth default null,
+    gender: p.gender default null,
+    address: p.address_line1 default null,
+    city: p.city default null,
+    state: p.state default null,
+    postalCode: p.postal_code default null
+}
+                        ]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+
+            </otherwise>
+
+        </choice>
+
+    </flow>
+
+    <!-- GET PATIENT ENCOUNTERS -->
+
+    <flow name="get:\patients\(patientId)\encounters:healthcare-hl7-api-config">
+
+        <set-variable
+            variableName="patientId"
+            value="#[attributes.uriParams.'patientId']"/>
+
+        <db:select
+            doc:name="Get Patient Encounters"
+            config-ref="Database_Config">
+
+            <db:sql><![CDATA[
+SELECT
+    encounter_id,
+    patient_id,
+    admission_date,
+    discharge_date,
+    ward,
+    room,
+    bed,
+    status,
+    last_event_time,
+    account_number,
+    patient_class,
+    facility
+FROM encounters
+WHERE patient_id = :patientId
+ORDER BY admission_date DESC
+            ]]></db:sql>
+
+            <db:input-parameters><![CDATA[#[{
+    patientId: vars.patientId
+}]]]></db:input-parameters>
+
+        </db:select>
+
+        <ee:transform doc:name="Patient Encounters Response">
+            <ee:message>
+                <ee:set-payload><![CDATA[
+%dw 2.0
+output application/json
+---
+payload map (e) -> {
+    encounterId: e.encounter_id,
+    patientId: e.patient_id,
+    admissionDate: e.admission_date,
+    dischargeDate: e.discharge_date,
+    ward: e.ward,
+    room: e.room,
+    bed: e.bed,
+    status: e.status,
+    lastEventTime: e.last_event_time,
+    accountNumber: e.account_number,
+    patientClass: e.patient_class,
+    facility: e.facility
+}
+                ]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+
+    </flow>
+
+    <!-- GET HL7 MESSAGE STATUS -->
+
+    <flow name="get:\hl7\messages\(messageId):healthcare-hl7-api-config">
+
+        <set-variable
+            variableName="messageId"
+            value="#[attributes.uriParams.'messageId']"/>
+
+        <db:select
+            doc:name="Get HL7 Message From MySQL"
+            config-ref="Database_Config">
+
+            <db:sql><![CDATA[
+SELECT
+    message_id,
+    event_type,
+    patient_id,
+    processed_at,
+    file_name,
+    message_type,
+    NULL AS sending_facility,
+    NULL AS msg_datetime,
+    mrn,
+    processing_status,
+    ack_code,
+    NULL AS reject_reason
+FROM processed_messages
+WHERE message_id = :messageId
+LIMIT 1
+            ]]></db:sql>
+
+            <db:input-parameters><![CDATA[#[{
+    messageId: vars.messageId
+}]]]></db:input-parameters>
+
+        </db:select>
+
+        <choice doc:name="Message Found?">
+
+            <when expression="#[isEmpty(payload)]">
+
+                <set-variable variableName="httpStatus" value="#[404]"/>
+
+                <ee:transform doc:name="Message Not Found">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[
+%dw 2.0
+output application/json
+---
+{
+    status: "NOT_FOUND",
+    message: "HL7 message not found",
+    messageId: vars.messageId
+}
+                        ]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+
+            </when>
+
+            <otherwise>
+
+                <ee:transform doc:name="HL7 Status Response">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[
+%dw 2.0
+output application/json
+var m = payload[0]
+---
+{
+    messageId: m.message_id,
+    eventType: m.event_type,
+    patientId: m.patient_id,
+    processingStatus: m.processing_status,
+    processedAt: m.processed_at,
+    acknowledgementCode: m.ack_code,
+    messageType: m.message_type,
+    sendingFacility: m.sending_facility,
+    messageDateTime: m.msg_datetime,
+    mrn: m.mrn,
+    fileName: m.file_name,
+    rejectReason: m.reject_reason
+}
+                        ]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+
+            </otherwise>
+
+        </choice>
+
+    </flow>
+
+    <!-- GET ACKNOWLEDGEMENT -->
+
+    <flow name="get:\acknowledgements\(messageId):healthcare-hl7-api-config">
+
+        <set-variable
+            variableName="messageId"
+            value="#[attributes.uriParams.'messageId']"/>
+
+        <db:select
+            doc:name="Get Acknowledgement From MySQL"
+            config-ref="Database_Config">
+
+            <db:sql><![CDATA[
+SELECT
+    message_id,
+    event_type,
+    ack_code,
+    processing_status,
+    processed_at,
+    NULL AS reject_reason
+FROM processed_messages
+WHERE message_id = :messageId
+LIMIT 1
+            ]]></db:sql>
+
+            <db:input-parameters><![CDATA[#[{
+    messageId: vars.messageId
+}]]]></db:input-parameters>
+
+        </db:select>
+
+        <choice doc:name="Acknowledgement Found?">
+
+            <when expression="#[isEmpty(payload)]">
+
+                <set-variable variableName="httpStatus" value="#[404]"/>
+
+                <ee:transform doc:name="Acknowledgement Not Found">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[
+%dw 2.0
+output application/json
+---
+{
+    status: "NOT_FOUND",
+    message: "Acknowledgement not found",
+    messageId: vars.messageId
+}
+                        ]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+
+            </when>
+
+            <otherwise>
+
+                <ee:transform doc:name="Acknowledgement Response">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[
+%dw 2.0
+output application/json
+var a = payload[0]
+---
+{
+    messageId: a.message_id,
+    acknowledgementCode: a.ack_code,
+    eventType: a.event_type,
+    processingStatus: a.processing_status,
+    processedAt: a.processed_at,
+    rejectReason: a.reject_reason,
+    acknowledgementDescription:
+        if (a.ack_code == "AA")
+            "Application Accept - HL7 message processed successfully"
+        else if (a.ack_code == "AE")
+            "Application Error - HL7 message processing error"
+        else if (a.ack_code == "AR")
+            "Application Reject - HL7 message rejected"
+        else
+            "Acknowledgement code not available"
+}
+                        ]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+
+            </otherwise>
+
+        </choice>
+
+    </flow>
+
+    <!-- POST HL7 MESSAGE TO AWS S3 -->
+
+    <flow name="post:\hl7\messages:application\json:healthcare-hl7-api-config">
+
+        <set-variable
+            doc:name="Store HL7 Message"
+            variableName="inboundHL7"
+            value="#[(payload.hl7Message default '') as String]"/>
+
+        <set-variable
+            doc:name="Store API Message ID"
+            variableName="apiMessageId"
+            value="#[(payload.messageId default '') as String]"/>
+
+        <choice doc:name="Validate HL7 Request">
+
+            <when expression="#[isEmpty(vars.inboundHL7) or not (vars.inboundHL7 startsWith 'MSH|')]">
+
+                <set-variable variableName="httpStatus" value="#[400]"/>
+
+                <ee:transform doc:name="Invalid HL7 Response">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[
+%dw 2.0
+output application/json
+---
+{
+    status: "REJECTED",
+    message: "A valid HL7 message beginning with MSH| is required"
+}
+                        ]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+
+            </when>
+
+            <otherwise>
+
+                <set-variable
+                    doc:name="Generate S3 Object Key"
+                    variableName="s3ObjectKey"
+                    value='#["incoming-hl7/API_" ++ uuid() ++ ".hl7"]'/>
+
+                <s3:put-object
+                    doc:name="Upload HL7 to AWS S3"
+                    config-ref="Amazon_S3_Configuration"
+                    bucketName="${aws.bucket}"
+                    key="#[vars.s3ObjectKey]">
+
+                    <s3:content><![CDATA[#[vars.inboundHL7 as Binary]]]></s3:content>
+
+                </s3:put-object>
+
+                <set-variable variableName="httpStatus" value="#[202]"/>
+
+                <ee:transform doc:name="HL7 Submission Response">
+                    <ee:message>
+                        <ee:set-payload><![CDATA[
+%dw 2.0
+output application/json
+var msh = ((vars.inboundHL7 splitBy /\r\n|\n|\r/)[0] default "") splitBy "|"
+var event = (msh[8] default "") splitBy "^"
+---
+{
+    messageId: msh[9] default vars.apiMessageId,
+    status: "ACCEPTED",
+    eventType: event[1] default "",
+    s3ObjectKey: vars.s3ObjectKey,
+    message: "HL7 file uploaded to AWS S3 for processing"
+}
+                        ]]></ee:set-payload>
+                    </ee:message>
+                </ee:transform>
+
+            </otherwise>
+
+        </choice>
+
+    </flow>
+
+</mule>

@@ -1,0 +1,1043 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:db="http://www.mulesoft.org/schema/mule/db"
+      xmlns:s3="http://www.mulesoft.org/schema/mule/s3"
+      xmlns:apikit="http://www.mulesoft.org/schema/mule/mule-apikit"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xsi:schemaLocation="
+      http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+      http://www.mulesoft.org/schema/mule/db http://www.mulesoft.org/schema/mule/db/current/mule-db.xsd
+      http://www.mulesoft.org/schema/mule/s3 http://www.mulesoft.org/schema/mule/s3/current/mule-s3.xsd
+      http://www.mulesoft.org/schema/mule/mule-apikit http://www.mulesoft.org/schema/mule/mule-apikit/current/mule-apikit.xsd
+      http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+      http://www.mulesoft.org/schema/mule/munit-tools http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+    <munit:config name="healthcare-hl7-api-test.xml"/>
+
+    <!-- TEST 1: HEALTH API -->
+
+    <munit:test name="HL7-API-Health-Test"
+                description="Verify Health API response">
+
+        <munit:execution>
+            <flow-ref name="get:\health:healthcare-hl7-api-config"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.status]"
+                is="#[MunitTools::equalTo('UP')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.application]"
+                is="#[MunitTools::equalTo('Healthcare HL7 Message Routing API')]"/>
+        </munit:validation>
+
+    </munit:test>
+
+    <!-- TEST 2: MONITORING SUMMARY -->
+
+    <munit:test name="HL7-API-Monitoring-Summary-Test"
+                description="Verify monitoring statistics">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get Monitoring Statistics']"/>
+                </munit-tools:with-attributes>
+
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[{
+                            totalReceived: 100,
+                            processed: 80,
+                            quarantined: 10,
+                            duplicates: 0,
+                            processingFailures: 5,
+                            superseded: 3,
+                            unknownStatus: 2
+                        }]]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <flow-ref name="get:\monitoring\summary:healthcare-hl7-api-config"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.totalReceived]"
+                is="#[MunitTools::equalTo(100)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.processed]"
+                is="#[MunitTools::equalTo(80)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.quarantined]"
+                is="#[MunitTools::equalTo(10)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.processingFailures]"
+                is="#[MunitTools::equalTo(5)]"/>
+
+            <munit-tools:verify-call processor="db:select" times="1">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get Monitoring Statistics']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+        </munit:validation>
+
+    </munit:test>
+
+    <!-- TEST 3: PATIENT FOUND -->
+
+    <munit:test name="HL7-API-Patient-Found-Test"
+                description="Verify existing patient details">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get Patient From MySQL']"/>
+                </munit-tools:with-attributes>
+
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[{
+                            patient_id: 'PATMUNIT001',
+                            patient_key: 'KEY001',
+                            mrn: 'MRN001',
+                            first_name: 'TEST',
+                            middle_name: null,
+                            last_name: 'PATIENT',
+                            date_of_birth: null,
+                            gender: 'M',
+                            address_line1: null,
+                            city: null,
+                            state: null,
+                            postal_code: null
+                        }]]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{uriParams: {patientId: 'PATMUNIT001'}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="get:\patients\(patientId):healthcare-hl7-api-config"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.patientId]"
+                is="#[MunitTools::equalTo('PATMUNIT001')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.firstName]"
+                is="#[MunitTools::equalTo('TEST')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.lastName]"
+                is="#[MunitTools::equalTo('PATIENT')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.gender]"
+                is="#[MunitTools::equalTo('M')]"/>
+
+            <munit-tools:assert-that
+                expression="#[vars.httpStatus default 200]"
+                is="#[MunitTools::equalTo(200)]"/>
+
+            <munit-tools:verify-call processor="db:select" times="1">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get Patient From MySQL']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+        </munit:validation>
+
+    </munit:test>
+
+    <!-- TEST 4: PATIENT NOT FOUND -->
+
+    <munit:test name="HL7-API-Patient-Not-Found-Test"
+                description="Verify missing patient response">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get Patient From MySQL']"/>
+                </munit-tools:with-attributes>
+
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[]]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{uriParams: {patientId: 'PATNOTFOUND'}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="get:\patients\(patientId):healthcare-hl7-api-config"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.httpStatus]"
+                is="#[MunitTools::equalTo(404)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.status]"
+                is="#[MunitTools::equalTo('NOT_FOUND')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.message]"
+                is="#[MunitTools::equalTo('Patient not found')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.patientId]"
+                is="#[MunitTools::equalTo('PATNOTFOUND')]"/>
+
+            <munit-tools:verify-call processor="db:select" times="1">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get Patient From MySQL']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+        </munit:validation>
+
+    </munit:test>
+
+    <!-- TEST 5: PATIENT ENCOUNTERS FOUND -->
+
+    <munit:test name="HL7-API-Patient-Encounters-Found-Test"
+                description="Verify patient encounter list">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get Patient Encounters']"/>
+                </munit-tools:with-attributes>
+
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[{
+                            encounter_id: 'ENCMUNIT001',
+                            patient_id: 'PATMUNIT001',
+                            admission_date: null,
+                            discharge_date: null,
+                            ward: 'WARD1',
+                            room: '101',
+                            bed: 'B1',
+                            status: 'ADMITTED',
+                            last_event_time: null,
+                            account_number: 'ACC001',
+                            patient_class: 'I',
+                            facility: 'MAIN'
+                        }, {
+                            encounter_id: 'ENCMUNIT002',
+                            patient_id: 'PATMUNIT001',
+                            admission_date: null,
+                            discharge_date: null,
+                            ward: 'WARD2',
+                            room: '205',
+                            bed: 'B2',
+                            status: 'DISCHARGED',
+                            last_event_time: null,
+                            account_number: 'ACC002',
+                            patient_class: 'I',
+                            facility: 'MAIN'
+                        }]]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{uriParams: {patientId: 'PATMUNIT001'}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="get:\patients\(patientId)\encounters:healthcare-hl7-api-config"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[sizeOf(payload)]"
+                is="#[MunitTools::equalTo(2)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload[0].encounterId]"
+                is="#[MunitTools::equalTo('ENCMUNIT001')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload[0].patientId]"
+                is="#[MunitTools::equalTo('PATMUNIT001')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload[0].ward]"
+                is="#[MunitTools::equalTo('WARD1')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload[1].status]"
+                is="#[MunitTools::equalTo('DISCHARGED')]"/>
+
+            <munit-tools:verify-call processor="db:select" times="1">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get Patient Encounters']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+        </munit:validation>
+
+    </munit:test>
+
+    <!-- TEST 6: PATIENT ENCOUNTERS EMPTY -->
+
+    <munit:test name="HL7-API-Patient-Encounters-Empty-Test"
+                description="Verify empty encounter list">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get Patient Encounters']"/>
+                </munit-tools:with-attributes>
+
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[]]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{uriParams: {patientId: 'PATNOENCOUNTERS'}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="get:\patients\(patientId)\encounters:healthcare-hl7-api-config"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[sizeOf(payload)]"
+                is="#[MunitTools::equalTo(0)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload is Array]"
+                is="#[MunitTools::equalTo(true)]"/>
+
+            <munit-tools:verify-call processor="db:select" times="1">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get Patient Encounters']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+        </munit:validation>
+
+    </munit:test>
+
+    <!-- TEST 7: HL7 MESSAGE FOUND -->
+
+    <munit:test name="HL7-API-Message-Found-Test"
+                description="Verify existing HL7 message status">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get HL7 Message From MySQL']"/>
+                </munit-tools:with-attributes>
+
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[{
+                            message_id: 'MUNITA01',
+                            event_type: 'A01',
+                            patient_id: 'PATMUNIT001',
+                            processing_status: 'PROCESSED',
+                            processed_at: null,
+                            ack_code: 'AA',
+                            message_type: 'ADT',
+                            sending_facility: null,
+                            msg_datetime: null,
+                            mrn: 'MRN001',
+                            file_name: 'munit-a01.hl7',
+                            reject_reason: null
+                        }]]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{uriParams: {messageId: 'MUNITA01'}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="get:\hl7\messages\(messageId):healthcare-hl7-api-config"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.messageId]"
+                is="#[MunitTools::equalTo('MUNITA01')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.eventType]"
+                is="#[MunitTools::equalTo('A01')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.patientId]"
+                is="#[MunitTools::equalTo('PATMUNIT001')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.processingStatus]"
+                is="#[MunitTools::equalTo('PROCESSED')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.acknowledgementCode]"
+                is="#[MunitTools::equalTo('AA')]"/>
+
+            <munit-tools:assert-that
+                expression="#[vars.httpStatus default 200]"
+                is="#[MunitTools::equalTo(200)]"/>
+
+            <munit-tools:verify-call processor="db:select" times="1">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get HL7 Message From MySQL']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+        </munit:validation>
+
+    </munit:test>
+
+    <!-- TEST 8: HL7 MESSAGE NOT FOUND -->
+
+    <munit:test name="HL7-API-Message-Not-Found-Test"
+                description="Verify missing HL7 message response">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get HL7 Message From MySQL']"/>
+                </munit-tools:with-attributes>
+
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[]]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{uriParams: {messageId: 'MSGNOTFOUND'}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="get:\hl7\messages\(messageId):healthcare-hl7-api-config"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.httpStatus]"
+                is="#[MunitTools::equalTo(404)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.status]"
+                is="#[MunitTools::equalTo('NOT_FOUND')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.message]"
+                is="#[MunitTools::equalTo('HL7 message not found')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.messageId]"
+                is="#[MunitTools::equalTo('MSGNOTFOUND')]"/>
+
+            <munit-tools:verify-call processor="db:select" times="1">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get HL7 Message From MySQL']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+        </munit:validation>
+
+    </munit:test>
+
+    <!-- TEST 9: ACKNOWLEDGEMENT FOUND -->
+
+    <munit:test name="HL7-API-Acknowledgement-Found-Test"
+                description="Verify successful HL7 acknowledgement">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get Acknowledgement From MySQL']"/>
+                </munit-tools:with-attributes>
+
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[{
+                            message_id: 'MUNITA01',
+                            event_type: 'A01',
+                            ack_code: 'AA',
+                            processing_status: 'PROCESSED',
+                            processed_at: null,
+                            reject_reason: null
+                        }]]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{uriParams: {messageId: 'MUNITA01'}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="get:\acknowledgements\(messageId):healthcare-hl7-api-config"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.messageId]"
+                is="#[MunitTools::equalTo('MUNITA01')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.acknowledgementCode]"
+                is="#[MunitTools::equalTo('AA')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.eventType]"
+                is="#[MunitTools::equalTo('A01')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.processingStatus]"
+                is="#[MunitTools::equalTo('PROCESSED')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.acknowledgementDescription]"
+                is="#[MunitTools::equalTo('Application Accept - HL7 message processed successfully')]"/>
+
+            <munit-tools:verify-call processor="db:select" times="1">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get Acknowledgement From MySQL']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+        </munit:validation>
+
+    </munit:test>
+
+    <!-- TEST 10: ACKNOWLEDGEMENT NOT FOUND -->
+
+    <munit:test name="HL7-API-Acknowledgement-Not-Found-Test"
+                description="Verify missing HL7 acknowledgement">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get Acknowledgement From MySQL']"/>
+                </munit-tools:with-attributes>
+
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[]]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{uriParams: {messageId: 'ACKNOTFOUND'}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="get:\acknowledgements\(messageId):healthcare-hl7-api-config"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.httpStatus]"
+                is="#[MunitTools::equalTo(404)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.status]"
+                is="#[MunitTools::equalTo('NOT_FOUND')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.message]"
+                is="#[MunitTools::equalTo('Acknowledgement not found')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.messageId]"
+                is="#[MunitTools::equalTo('ACKNOTFOUND')]"/>
+
+            <munit-tools:verify-call processor="db:select" times="1">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Get Acknowledgement From MySQL']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+        </munit:validation>
+
+    </munit:test>
+
+    <!-- TEST 11: VALID HL7 POST -->
+
+    <munit:test name="HL7-API-POST-Valid-Test"
+                description="Verify valid HL7 message accepted for S3 upload">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="s3:put-object">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Upload HL7 to AWS S3']"/>
+                </munit-tools:with-attributes>
+
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{eTag: 'munit-test-etag'}]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value="#[{messageId: 'MUNITPOST001', hl7Message: 'MSH|^~\&amp;|TEST|HOSPITAL|RECEIVER|HOSPITAL|20261019100000||ADT^A01|MUNITPOST001|P|2.5'}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="post:\hl7\messages:application\json:healthcare-hl7-api-config"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.httpStatus]"
+                is="#[MunitTools::equalTo(202)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.status]"
+                is="#[MunitTools::equalTo('ACCEPTED')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.messageId]"
+                is="#[MunitTools::equalTo('MUNITPOST001')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.eventType]"
+                is="#[MunitTools::equalTo('A01')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.s3ObjectKey startsWith 'incoming-hl7/API_']"
+                is="#[MunitTools::equalTo(true)]"/>
+
+            <munit-tools:verify-call processor="s3:put-object" times="1">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Upload HL7 to AWS S3']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+        </munit:validation>
+
+    </munit:test>
+
+    <!-- TEST 12: INVALID HL7 POST -->
+
+    <munit:test name="HL7-API-POST-Invalid-Test"
+                description="Verify invalid HL7 message is rejected">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:payload
+                    value="#[{messageId: 'MUNITINVALID001', hl7Message: 'INVALID MESSAGE'}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="post:\hl7\messages:application\json:healthcare-hl7-api-config"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.httpStatus]"
+                is="#[MunitTools::equalTo(400)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.status]"
+                is="#[MunitTools::equalTo('REJECTED')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.message]"
+                is="#[MunitTools::equalTo('A valid HL7 message beginning with MSH| is required')]"/>
+
+            <munit-tools:verify-call
+                processor="s3:put-object"
+                times="0"/>
+        </munit:validation>
+
+    </munit:test>
+
+    <!-- TEST 13: INVALID API KEY -->
+
+    <munit:test name="HL7-API-Invalid-API-Key-Test"
+                description="Verify invalid API key returns 401">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="apikit:router">
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{status: 'SHOULD_NOT_BE_CALLED'}]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{headers: {'x-api-key': 'INVALID_MUNIT_KEY'}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="healthcare-hl7-api-main"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.httpStatus]"
+                is="#[MunitTools::equalTo(401)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.status]"
+                is="#[MunitTools::equalTo(401)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.error]"
+                is="#[MunitTools::equalTo('Unauthorized')]"/>
+
+            <munit-tools:verify-call
+                processor="apikit:router"
+                times="0"/>
+        </munit:validation>
+
+    </munit:test>
+
+    <!-- TEST 14: VALID API KEY -->
+
+    <munit:test name="HL7-API-Valid-API-Key-Test"
+                description="Verify valid API key reaches APIKit Router">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="apikit:router">
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{status: 'ROUTED'}]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{headers: {'x-api-key': p('api.security.key')}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="healthcare-hl7-api-main"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[payload.status]"
+                is="#[MunitTools::equalTo('ROUTED')]"/>
+
+            <munit-tools:verify-call
+                processor="apikit:router"
+                times="1"/>
+        </munit:validation>
+
+    </munit:test>
+
+    <!-- TEST 15: MISSING API KEY -->
+
+    <munit:test name="HL7-API-Missing-API-Key-Test"
+                description="Verify missing API key returns 401">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{headers: {}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="healthcare-hl7-api-main"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.httpStatus]"
+                is="#[MunitTools::equalTo(401)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.error]"
+                is="#[MunitTools::equalTo('Unauthorized')]"/>
+
+            <munit-tools:verify-call
+                processor="apikit:router"
+                times="0"/>
+        </munit:validation>
+
+    </munit:test>
+
+    <!-- TEST 16: INCORRECT API KEY -->
+
+    <munit:test name="HL7-API-Incorrect-API-Key-Test"
+                description="Verify incorrect API key cannot access APIKit">
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{headers: {'x-api-key': 'WRONG_KEY_12345'}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="healthcare-hl7-api-main"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.httpStatus]"
+                is="#[MunitTools::equalTo(401)]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.status]"
+                is="#[MunitTools::equalTo(401)]"/>
+
+            <munit-tools:verify-call
+                processor="apikit:router"
+                times="0"/>
+        </munit:validation>
+
+    </munit:test>
+
+    <!-- TEST 17: APIKIT BAD REQUEST - 400 -->
+
+    <munit:test name="HL7-APIKit-Bad-Request-Test"
+                description="Test APIKIT BAD_REQUEST error handler"
+                expectedErrorType="APIKIT:BAD_REQUEST">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="apikit:router">
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="APIKIT:BAD_REQUEST"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{headers: {'x-api-key': p('api.security.key')}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="healthcare-hl7-api-main"/>
+        </munit:execution>
+
+    </munit:test>
+
+    <!-- TEST 18: APIKIT NOT FOUND - 404 -->
+
+    <munit:test name="HL7-APIKit-Not-Found-Test"
+                description="Test APIKIT NOT_FOUND error handler"
+                expectedErrorType="APIKIT:NOT_FOUND">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="apikit:router">
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="APIKIT:NOT_FOUND"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{headers: {'x-api-key': p('api.security.key')}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="healthcare-hl7-api-main"/>
+        </munit:execution>
+
+    </munit:test>
+
+    <!-- TEST 19: APIKIT METHOD NOT ALLOWED - 405 -->
+
+    <munit:test name="HL7-APIKit-Method-Not-Allowed-Test"
+                description="Test APIKIT METHOD_NOT_ALLOWED error handler"
+                expectedErrorType="APIKIT:METHOD_NOT_ALLOWED">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="apikit:router">
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="APIKIT:METHOD_NOT_ALLOWED"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{headers: {'x-api-key': p('api.security.key')}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="healthcare-hl7-api-main"/>
+        </munit:execution>
+
+    </munit:test>
+
+    <!-- TEST 20: APIKIT NOT ACCEPTABLE - 406 -->
+
+    <munit:test name="HL7-APIKit-Not-Acceptable-Test"
+                description="Test APIKIT NOT_ACCEPTABLE error handler"
+                expectedErrorType="APIKIT:NOT_ACCEPTABLE">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="apikit:router">
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="APIKIT:NOT_ACCEPTABLE"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{headers: {'x-api-key': p('api.security.key')}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="healthcare-hl7-api-main"/>
+        </munit:execution>
+
+    </munit:test>
+
+    <!-- TEST 21: APIKIT UNSUPPORTED MEDIA TYPE - 415 -->
+
+    <munit:test name="HL7-APIKit-Unsupported-Media-Type-Test"
+                description="Test APIKIT UNSUPPORTED_MEDIA_TYPE error handler"
+                expectedErrorType="APIKIT:UNSUPPORTED_MEDIA_TYPE">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="apikit:router">
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="APIKIT:UNSUPPORTED_MEDIA_TYPE"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{headers: {'x-api-key': p('api.security.key')}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="healthcare-hl7-api-main"/>
+        </munit:execution>
+
+    </munit:test>
+
+    <!-- TEST 22: APIKIT NOT IMPLEMENTED - 501 -->
+
+    <munit:test name="HL7-APIKit-Not-Implemented-Test"
+                description="Test APIKIT NOT_IMPLEMENTED error handler"
+                expectedErrorType="APIKIT:NOT_IMPLEMENTED">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="apikit:router">
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="APIKIT:NOT_IMPLEMENTED"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <munit:set-event>
+                <munit:attributes
+                    value="#[{headers: {'x-api-key': p('api.security.key')}}]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="healthcare-hl7-api-main"/>
+        </munit:execution>
+
+    </munit:test>
+
+</mule>

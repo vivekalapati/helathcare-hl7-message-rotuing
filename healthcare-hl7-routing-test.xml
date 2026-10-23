@@ -1,0 +1,1209 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xsi:schemaLocation="
+http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd 
+        http://www.mulesoft.org/schema/mule/core
+        http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit
+        http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools
+        http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+    <munit:config name="healthcare-hl7-routing-test.xml"/>
+
+    <!-- ================================================== -->
+    <!-- TEST 1: A01 ADMISSION -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-A01-Admission-Test"
+                description="Verify A01 admission">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[[]]"
+                                         mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="db:insert">
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{affectedRows: 1}]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="amqp:publish">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="s3:put-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-payload
+                value="#['MSH|^~\&amp;|HOSPITAL|MAIN|MULESOFT|CLOUDHUB|20261018100000||ADT^A01|MUNITA01|P|2.5\rEVN|A01|20261018100000\rPID|1||PATMUNIT001^^^HOSPITAL^MR||TEST^PATIENT||20010115|M\rPV1|1|I|WARD1^101^B1||||||||||||||||ENCMUNIT001']"/>
+            <set-variable variableName="originalHL7"
+                          value="#[payload]"/>
+            <set-variable variableName="hl7FileName"
+                          value="munit-a01.hl7"/>
+            <flow-ref name="healthcare-hl7-routingFlow"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.hl7Data.eventType]"
+                is="#[MunitTools::equalTo('A01')]"/>
+            <munit-tools:assert-that
+                expression="#[vars.ackCode]"
+                is="#[MunitTools::equalTo('AA')]"/>
+            <munit-tools:verify-call processor="db:insert"
+                                     atLeast="1"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 2: A02 TRANSFER -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-A02-Transfer-Test"
+                description="Verify A02 transfer">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Check Duplicate']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[[]]"
+                                         mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable key="duplicateResult"
+                                              value="#[[]]"
+                                              mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="db:update">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Transfer Patient']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{affectedRows: 1}]"
+                        mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable
+                            key="eventUpdateResult"
+                            value="#[{affectedRows: 1}]"
+                            mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="db:insert">
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{affectedRows: 1}]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="amqp:publish">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="s3:put-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-payload
+                value="#['MSH|^~\&amp;|HOSPITAL|MAIN|MULESOFT|CLOUDHUB|20261018103000||ADT^A02|MUNITA02|P|2.5\rEVN|A02|20261018103000\rPID|1||PATMUNIT001^^^HOSPITAL^MR||TEST^PATIENT||20010115|M\rPV1|1|I|WARD2^205^B2||||||||||||||||ENCMUNIT001']"/>
+            <set-variable variableName="originalHL7"
+                          value="#[payload]"/>
+            <set-variable variableName="hl7FileName"
+                          value="munit-a02.hl7"/>
+            <flow-ref name="healthcare-hl7-routingFlow"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.hl7Data.eventType]"
+                is="#[MunitTools::equalTo('A02')]"/>
+            <munit-tools:assert-that
+                expression="#[vars.hl7Data.ward]"
+                is="#[MunitTools::equalTo('WARD2')]"/>
+            <munit-tools:assert-that
+                expression="#[vars.eventApplied]"
+                is="#[MunitTools::equalTo(true)]"/>
+            <munit-tools:assert-that
+                expression="#[vars.ackCode]"
+                is="#[MunitTools::equalTo('AA')]"/>
+            <munit-tools:verify-call processor="db:update"
+                                     times="1"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 3: A03 DISCHARGE -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-A03-Discharge-Test"
+                description="Verify A03 discharge and TiDB result">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Check Duplicate']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[[]]"
+                                         mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable
+                            key="duplicateResult"
+                            value="#[[]]"
+                            mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="db:update">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Discharge Patient']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{affectedRows: 1}]"
+                        mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable
+                            key="eventUpdateResult"
+                            value="#[{affectedRows: 1}]"
+                            mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Verify Discharge in TiDB']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[{encounter_id: 'ENCMUNIT001', patient_id: 'PATMUNIT001', status: 'DISCHARGED', event_time_text: '20261018110000', discharge_time_text: '20261018110000'}]]"
+                        mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable
+                            key="encounterVerification"
+                            value="#[[{encounter_id: 'ENCMUNIT001', patient_id: 'PATMUNIT001', status: 'DISCHARGED', event_time_text: '20261018110000', discharge_time_text: '20261018110000'}]]"
+                            mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="db:insert">
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{affectedRows: 1}]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="amqp:publish">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="s3:put-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-payload
+                value="#['MSH|^~\&amp;|HOSPITAL|MAIN|MULESOFT|CLOUDHUB|20261018110000||ADT^A03|MUNITA03|P|2.5\rEVN|A03|20261018110000\rPID|1||PATMUNIT001^^^HOSPITAL^MR||TEST^PATIENT||20010115|M\rPV1|1|I|WARD2^205^B2||||||||||||||||ENCMUNIT001']"/>
+            <set-variable variableName="originalHL7"
+                          value="#[payload]"/>
+            <set-variable variableName="hl7FileName"
+                          value="munit-a03.hl7"/>
+            <flow-ref name="healthcare-hl7-routingFlow"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.hl7Data.eventType]"
+                is="#[MunitTools::equalTo('A03')]"/>
+            <munit-tools:assert-that
+                expression="#[vars.eventApplied]"
+                is="#[MunitTools::equalTo(true)]"/>
+            <munit-tools:assert-that
+                expression="#[vars.ackCode]"
+                is="#[MunitTools::equalTo('AA')]"/>
+            <munit-tools:verify-call processor="db:update"
+                                     times="1"/>
+            
+<munit-tools:assert-that
+    expression="#[output application/java --- sizeOf(vars.encounterVerification default []) > 0 and (vars.encounterVerification[0].status default '') == 'DISCHARGED' and (vars.encounterVerification[0].event_time_text default '') == vars.hl7Data.eventTime and (vars.encounterVerification[0].discharge_time_text default '') == vars.hl7Data.eventTime]"
+    is="#[MunitTools::equalTo(true)]"/>
+            
+        </munit:validation>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 4: A08 PATIENT UPDATE -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-A08-Patient-Update-Test"
+                description="Verify A08 patient update">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[[]]"
+                                         mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="db:insert">
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{affectedRows: 1}]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="amqp:publish">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="s3:put-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-payload
+                value="#['MSH|^~\&amp;|HOSPITAL|MAIN|MULESOFT|CLOUDHUB|20261018120000||ADT^A08|MUNITA08|P|2.5\rEVN|A08|20261018120000\rPID|1||PATMUNIT001^^^HOSPITAL^MR||UPDATED^PATIENT||20010115|M\rPV1|1|I|WARD2^205^B2||||||||||||||||ENCMUNIT001']"/>
+            <set-variable variableName="originalHL7"
+                          value="#[payload]"/>
+            <set-variable variableName="hl7FileName"
+                          value="munit-a08.hl7"/>
+            <flow-ref name="healthcare-hl7-routingFlow"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.hl7Data.eventType]"
+                is="#[MunitTools::equalTo('A08')]"/>
+            <munit-tools:assert-that
+                expression="#[vars.eventApplied]"
+                is="#[MunitTools::equalTo(true)]"/>
+            <munit-tools:assert-that
+                expression="#[vars.ackCode]"
+                is="#[MunitTools::equalTo('AA')]"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 5: SKIP NON-HL7 FILE -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-S3-Skip-Non-HL7-Test"
+                description="Skip non-HL7 S3 objects">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="s3:get-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+            <munit-tools:mock-when processor="s3:delete-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-payload
+                value="#[{key: 'incoming-hl7/readme.txt'}]"/>
+            <flow-ref name="s3-hl7-inbound-flow"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:verify-call processor="s3:get-object"
+                                     times="0"/>
+            <munit-tools:verify-call processor="s3:delete-object"
+                                     times="0"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 6: VALID S3 FILE -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-S3-Valid-File-Test"
+                description="Process valid HL7 file from S3">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="s3:get-object">
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#['MSH|^~\&amp;|HOSPITAL|MAIN|MULESOFT|CLOUDHUB|20261018100000||ADT^A01|MUNITS3|P|2.5\rEVN|A01|20261018100000\rPID|1||PATS3001||TEST^PATIENT\rPV1|1|I|WARD1||||||||||||||||ENC3001']"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="mule:flow-ref">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="name"
+                        whereValue="#['healthcare-hl7-routingFlow']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="s3:delete-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-payload
+                value="#[{key: 'incoming-hl7/valid.hl7'}]"/>
+            <flow-ref name="s3-hl7-inbound-flow"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:verify-call processor="s3:get-object"
+                                     times="1"/>
+            <munit-tools:verify-call processor="s3:delete-object"
+                                     times="1"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 7: DUPLICATE MESSAGE -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-Duplicate-Message-Test"
+                description="Verify duplicate logging without reprocessing">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Check Duplicate']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[{message_id: 'MUNITDUP001'}]]"
+                        mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable
+                            key="duplicateResult"
+                            value="#[[{message_id: 'MUNITDUP001'}]]"
+                            mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="db:insert">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Record Duplicate Attempt']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{affectedRows: 1}]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="s3:put-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="amqp:publish">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-payload
+                value="#['MSH|^~\&amp;|HOSPITAL|MAIN|MULESOFT|CLOUDHUB|20261018100000||ADT^A01|MUNITDUP001|P|2.5\rEVN|A01|20261018100000\rPID|1||PATDUP001||TEST^PATIENT\rPV1|1|I|WARD1||||||||||||||||ENCDUP001']"/>
+            <set-variable variableName="originalHL7"
+                          value="#[payload]"/>
+            <set-variable variableName="hl7FileName"
+                          value="duplicate.hl7"/>
+            <flow-ref name="healthcare-hl7-routingFlow"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.duplicateMessage]"
+                is="#[MunitTools::equalTo(true)]"/>
+            <munit-tools:assert-that
+                expression="#[vars.ackCode]"
+                is="#[MunitTools::equalTo('AA')]"/>
+            <munit-tools:verify-call processor="db:insert"
+                                     times="1"/>
+            <munit-tools:verify-call processor="db:update"
+                                     times="0"/>
+            <munit-tools:verify-call processor="amqp:publish"
+                                     times="0"/>
+            <munit-tools:verify-call processor="s3:put-object"
+                                     atLeast="1"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 8: UNSUPPORTED A99 EVENT -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-Unsupported-A99-Test"
+                description="Reject unsupported A99 event">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:insert">
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{affectedRows: 1}]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="s3:put-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-payload
+                value="#['MSH|^~\&amp;|HOSPITAL|MAIN|MULESOFT|CLOUDHUB|20261018130000||ADT^A99|MUNITA99|P|2.5\rEVN|A99|20261018130000\rPID|1||PATA99001||TEST^PATIENT\rPV1|1|I|WARD1||||||||||||||||ENCA99001']"/>
+            <set-variable variableName="originalHL7"
+                          value="#[payload]"/>
+            <set-variable variableName="hl7FileName"
+                          value="unsupported.hl7"/>
+            <flow-ref name="healthcare-hl7-routingFlow"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.ackCode]"
+                is="#[MunitTools::equalTo('AR')]"/>
+            <munit-tools:verify-call processor="db:insert"
+                                     times="1"/>
+            <munit-tools:verify-call processor="db:update"
+                                     times="0"/>
+            <munit-tools:verify-call processor="amqp:publish"
+                                     times="0"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 9: A02 TRANSFER FAILURE -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-A02-Transfer-Failure-Test"
+                description="Verify unsuccessful A02 transfer">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Check Duplicate']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[[]]"
+                                         mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable
+                            key="duplicateResult"
+                            value="#[[]]"
+                            mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="db:update">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Transfer Patient']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{affectedRows: 0}]"
+                        mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable
+                            key="eventUpdateResult"
+                            value="#[{affectedRows: 0}]"
+                            mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="s3:put-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-payload
+                value="#['MSH|^~\&amp;|HOSPITAL|MAIN|MULESOFT|CLOUDHUB|20261018140000||ADT^A02|MUNITFAIL001|P|2.5\rEVN|A02|20261018140000\rPID|1||PATMUNIT001||TEST^PATIENT\rPV1|1|I|WARD3^301^B3||||||||||||||||ENCMUNIT001']"/>
+            <set-variable variableName="originalHL7"
+                          value="#[payload]"/>
+            <set-variable variableName="hl7FileName"
+                          value="transfer-failure.hl7"/>
+            <flow-ref name="healthcare-hl7-routingFlow"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.eventApplied]"
+                is="#[MunitTools::equalTo(false)]"/>
+            <munit-tools:assert-that
+                expression="#[vars.ackCode]"
+                is="#[MunitTools::equalTo('AE')]"/>
+            <munit-tools:verify-call processor="db:update"
+                                     times="1"/>
+            <munit-tools:verify-call processor="amqp:publish"
+                                     times="0"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 10: OUTDATED A02 MESSAGE -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-Outdated-Message-Test"
+                description="Verify outdated A02 is not applied">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Check Duplicate']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[[]]"
+                                         mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable
+                            key="duplicateResult"
+                            value="#[[]]"
+                            mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="db:update">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Transfer Patient']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{affectedRows: 0}]"
+                        mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable
+                            key="eventUpdateResult"
+                            value="#[{affectedRows: 0}]"
+                            mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="db:insert">
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{affectedRows: 1}]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="s3:put-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-payload
+                value="#['MSH|^~\&amp;|HOSPITAL|MAIN|MULESOFT|CLOUDHUB|20261019090000||ADT^A02|MUNITOLD001|P|2.5\rEVN|A02|20261019090000\rPID|1||PATMUNIT001^^^HOSPITAL^MR||TEST^PATIENT||20010115|M\rPV1|1|I|WARD3^301^B3||||||||||||||||ENCMUNIT001']"/>
+            <set-variable variableName="originalHL7"
+                          value="#[payload]"/>
+            <set-variable variableName="hl7FileName"
+                          value="outdated-a02.hl7"/>
+            <flow-ref name="healthcare-hl7-routingFlow"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.hl7Data.eventType]"
+                is="#[MunitTools::equalTo('A02')]"/>
+            <munit-tools:assert-that
+                expression="#[vars.eventApplied]"
+                is="#[MunitTools::equalTo(false)]"/>
+            <munit-tools:assert-that
+                expression="#[vars.ackCode]"
+                is="#[MunitTools::equalTo('AE')]"/>
+            <munit-tools:verify-call processor="db:update"
+                                     times="1"/>
+            <munit-tools:verify-call processor="amqp:publish"
+                                     times="0"/>
+            <munit-tools:verify-call processor="db:insert"
+                                     times="1"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 11: DATE OF BIRTH CONFLICT -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-NS08-DOB-Conflict-Test"
+                description="Reject existing MRN with conflicting DOB">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Find Existing Patient Identity']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[{patient_id: 'MRNNS08', first_name: 'RAHUL', last_name: 'SHARMA', dob_text: '20000115', gender: 'M'}]]"
+                        mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable
+                            key="existingPatient"
+                            value="#[[{patient_id: 'MRNNS08', first_name: 'RAHUL', last_name: 'SHARMA', dob_text: '20000115', gender: 'M'}]]"
+                            mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="db:insert">
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{affectedRows: 1}]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-variable
+                variableName="hl7Data"
+                value="#[{messageId: 'MUNIT-NS08-DOB', patientId: 'MRNNS08', dateOfBirth: '19850520', gender: 'M'}]"/>
+            <set-variable variableName="identityConflict"
+                          value="#[false]"/>
+            <set-variable variableName="eventApplied"
+                          value="#[false]"/>
+            <flow-ref name="upsert-patient"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.identityConflict]"
+                is="#[MunitTools::equalTo(true)]"/>
+            <munit-tools:assert-that
+                expression="#[vars.eventApplied]"
+                is="#[MunitTools::equalTo(false)]"/>
+            <munit-tools:verify-call processor="db:insert"
+                                     times="0">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Insert or Update Patient']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 12: GENDER CONFLICT -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-NS08-Gender-Conflict-Test"
+                description="Reject existing MRN with conflicting gender">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Find Existing Patient Identity']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[{patient_id: 'MRNNS08', dob_text: '20000115', gender: 'M'}]]"
+                        mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable
+                            key="existingPatient"
+                            value="#[[{patient_id: 'MRNNS08', dob_text: '20000115', gender: 'M'}]]"
+                            mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="db:insert">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-variable
+                variableName="hl7Data"
+                value="#[{messageId: 'MUNIT-NS08-GENDER', patientId: 'MRNNS08', dateOfBirth: '20000115', gender: 'F'}]"/>
+            <set-variable variableName="identityConflict"
+                          value="#[false]"/>
+            <set-variable variableName="eventApplied"
+                          value="#[false]"/>
+            <flow-ref name="upsert-patient"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.identityConflict]"
+                is="#[MunitTools::equalTo(true)]"/>
+            <munit-tools:assert-that
+                expression="#[vars.identityConflictReason]"
+                is="#[MunitTools::equalTo('Patient identity conflict: date of birth or gender does not match existing MRN')]"/>
+            <munit-tools:verify-call processor="db:insert"
+                                     times="0">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Insert or Update Patient']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 13: MATCHING IDENTITY -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-NS08-Matching-Identity-Test"
+                description="Allow patient upsert when identity matches">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Find Existing Patient Identity']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[{patient_id: 'MRNNS08', dob_text: '20000115', gender: 'M'}]]"
+                        mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable
+                            key="existingPatient"
+                            value="#[[{patient_id: 'MRNNS08', dob_text: '20000115', gender: 'M'}]]"
+                            mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="db:insert">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Insert or Update Patient']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{affectedRows: 1}]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-variable
+                variableName="hl7Data"
+                value="#[{messageId: 'MUNIT-NS08-MATCH', patientId: 'MRNNS08', mrn: 'MRNNS08', firstName: 'RAHUL', lastName: 'SHARMA', middleName: '', dateOfBirth: '20000115', gender: 'M', addressLine1: '', city: '', state: '', postalCode: '', country: '', contactPhone: '', maritalStatus: '', eventTime: '20261021150000'}]"/>
+            <set-variable variableName="identityConflict"
+                          value="#[false]"/>
+            <flow-ref name="upsert-patient"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.identityConflict]"
+                is="#[MunitTools::equalTo(false)]"/>
+            <munit-tools:verify-call processor="db:insert"
+                                     times="1">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Insert or Update Patient']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 14: TIDB DATABASE FAILURE -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-TiDB-Database-Failure-Test"
+                description="Verify database connectivity failure"
+                expectedErrorType="DB:CONNECTIVITY">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Check Duplicate']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="DB:CONNECTIVITY"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-payload
+                value="#['MSH|^~\&amp;|HOSPITAL|MAIN|MULESOFT|CLOUDHUB|20261021170000||ADT^A02|MUNITDBFAIL001|P|2.5\rEVN|A02|20261021170000\rPID|1||PATMUNIT001^^^HOSPITAL^MR||TEST^PATIENT||20010115|M\rPV1|1|I|WARD2^205^B2||||||||||||||||ENCMUNIT001']"/>
+            <set-variable variableName="originalHL7"
+                          value="#[payload]"/>
+            <set-variable variableName="hl7FileName"
+                          value="munit-db-failure.hl7"/>
+            <flow-ref name="healthcare-hl7-routingFlow"/>
+        </munit:execution>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 15: LAVINMQ PUBLISH FAILURE -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-LavinMQ-Publish-Failure-Test"
+                description="Verify AMQP connectivity failure"
+                expectedErrorType="AMQP:CONNECTIVITY">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:then-return>
+                    <munit-tools:payload value="#[[]]"
+                                         mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="db:insert">
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{affectedRows: 1}]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="amqp:publish">
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="AMQP:CONNECTIVITY"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="s3:put-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-payload
+                value="#['MSH|^~\&amp;|HOSPITAL|MAIN|MULESOFT|CLOUDHUB|20261021180000||ADT^A01|MUNITAMQPFAIL001|P|2.5\rEVN|A01|20261021180000\rPID|1||PATAMQP001^^^HOSPITAL^MR||TEST^PATIENT||20010115|M\rPV1|1|I|WARD1^101^B1||||||||||||||||ENCAMQP001']"/>
+            <set-variable variableName="originalHL7"
+                          value="#[payload]"/>
+            <set-variable variableName="hl7FileName"
+                          value="munit-lavinmq-failure.hl7"/>
+            <flow-ref name="healthcare-hl7-routingFlow"/>
+        </munit:execution>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 16: AMAZON S3 RETRIEVAL FAILURE -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-S3-Retrieval-Failure-Test"
+                description="Verify S3 connectivity failure"
+                expectedErrorType="S3:CONNECTIVITY">
+
+        <munit:behavior>
+            <munit-tools:mock-when processor="s3:get-object">
+                <munit-tools:then-return>
+                    <munit-tools:error typeId="S3:CONNECTIVITY"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <munit-tools:mock-when processor="s3:delete-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-payload
+                value="#[{key: 'incoming-hl7/munit-s3-failure.hl7'}]"/>
+            <flow-ref name="s3-hl7-inbound-flow"/>
+        </munit:execution>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 17: A01 ADMISSION IDENTITY CONFLICT -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-A01-Identity-Conflict-Routing-Test"
+                description="Reject A01 admission when DOB conflicts">
+
+        <munit:behavior>
+
+            <!-- Message is not a duplicate -->
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Check Duplicate']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[]]"
+                        mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable
+                            key="duplicateResult"
+                            value="#[[]]"
+                            mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <!-- Existing patient has different DOB -->
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Find Existing Patient Identity']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[{patient_id: 'MUNITA01CONFLICT', dob_text: '20000115', gender: 'M'}]]"
+                        mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable
+                            key="existingPatient"
+                            value="#[[{patient_id: 'MUNITA01CONFLICT', dob_text: '20000115', gender: 'M'}]]"
+                            mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <!-- Mock database inserts without modifying TiDB -->
+            <munit-tools:mock-when processor="db:insert">
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{affectedRows: 1}]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <!-- Prevent actual queue publishing -->
+            <munit-tools:mock-when processor="amqp:publish">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+
+            <!-- Prevent actual S3 writes -->
+            <munit-tools:mock-when processor="s3:put-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-payload
+                value="#['MSH|^~\&amp;|HOSPITAL|MAIN|MULESOFT|CLOUDHUB|20261022100000||ADT^A01|MUNITA01CONFLICTMSG|P|2.5\rEVN|A01|20261022100000\rPID|1||MUNITA01CONFLICT^^^HOSPITAL^MR||TEST^PATIENT||19990115|M\rPV1|1|I|WARD1^101^B1||||||||||||||||MUNITA01ENC']"/>
+
+            <set-variable variableName="originalHL7"
+                          value="#[payload]"/>
+
+            <set-variable variableName="hl7FileName"
+                          value="munit-a01-identity-conflict.hl7"/>
+
+            <flow-ref name="healthcare-hl7-routingFlow"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.hl7Data.eventType]"
+                is="#[MunitTools::equalTo('A01')]"/>
+
+            <munit-tools:assert-that
+                expression="#[vars.identityConflict]"
+                is="#[MunitTools::equalTo(true)]"/>
+
+            <munit-tools:assert-that
+                expression="#[vars.eventApplied]"
+                is="#[MunitTools::equalTo(false)]"/>
+
+            <munit-tools:assert-that
+                expression="#[vars.ackCode]"
+                is="#[MunitTools::equalTo('AE')]"/>
+
+            <!-- Admission must not be inserted -->
+            <munit-tools:verify-call processor="db:insert"
+                                     times="0">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Insert Admission']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+
+            <!-- Conflict must not be published -->
+            <munit-tools:verify-call processor="amqp:publish"
+                                     times="0"/>
+        </munit:validation>
+    </munit:test>
+
+    <!-- ================================================== -->
+    <!-- TEST 18: A08 PATIENT UPDATE IDENTITY CONFLICT -->
+    <!-- ================================================== -->
+
+    <munit:test name="HL7-A08-Identity-Conflict-Routing-Test"
+                description="Reject A08 update when gender conflicts">
+
+        <munit:behavior>
+
+            <!-- Message is not a duplicate -->
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Check Duplicate']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[]]"
+                        mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable
+                            key="duplicateResult"
+                            value="#[[]]"
+                            mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <!-- Existing patient has gender M -->
+            <munit-tools:mock-when processor="db:select">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Find Existing Patient Identity']"/>
+                </munit-tools:with-attributes>
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[[{patient_id: 'MUNITA08CONFLICT', dob_text: '20000115', gender: 'M'}]]"
+                        mediaType="application/java"/>
+                    <munit-tools:variables>
+                        <munit-tools:variable
+                            key="existingPatient"
+                            value="#[[{patient_id: 'MUNITA08CONFLICT', dob_text: '20000115', gender: 'M'}]]"
+                            mediaType="application/java"/>
+                    </munit-tools:variables>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <!-- Mock database writes -->
+            <munit-tools:mock-when processor="db:insert">
+                <munit-tools:then-return>
+                    <munit-tools:payload
+                        value="#[{affectedRows: 1}]"
+                        mediaType="application/java"/>
+                </munit-tools:then-return>
+            </munit-tools:mock-when>
+
+            <!-- Prevent actual queue publishing -->
+            <munit-tools:mock-when processor="amqp:publish">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+
+            <!-- Prevent actual S3 writes -->
+            <munit-tools:mock-when processor="s3:put-object">
+                <munit-tools:then-return/>
+            </munit-tools:mock-when>
+        </munit:behavior>
+
+        <munit:execution>
+            <set-payload
+                value="#['MSH|^~\&amp;|HOSPITAL|MAIN|MULESOFT|CLOUDHUB|20261022110000||ADT^A08|MUNITA08CONFLICTMSG|P|2.5\rEVN|A08|20261022110000\rPID|1||MUNITA08CONFLICT^^^HOSPITAL^MR||TEST^PATIENT||20000115|F\rPV1|1|I|WARD2^205^B2||||||||||||||||MUNITA08ENC']"/>
+
+            <set-variable variableName="originalHL7"
+                          value="#[payload]"/>
+
+            <set-variable variableName="hl7FileName"
+                          value="munit-a08-identity-conflict.hl7"/>
+
+            <flow-ref name="healthcare-hl7-routingFlow"/>
+        </munit:execution>
+
+        <munit:validation>
+            <munit-tools:assert-that
+                expression="#[vars.hl7Data.eventType]"
+                is="#[MunitTools::equalTo('A08')]"/>
+
+            <munit-tools:assert-that
+                expression="#[vars.identityConflict]"
+                is="#[MunitTools::equalTo(true)]"/>
+
+            <munit-tools:assert-that
+                expression="#[vars.eventApplied]"
+                is="#[MunitTools::equalTo(false)]"/>
+
+            <munit-tools:assert-that
+                expression="#[vars.ackCode]"
+                is="#[MunitTools::equalTo('AE')]"/>
+
+            <!-- Patient must not be updated -->
+            <munit-tools:verify-call processor="db:insert"
+                                     times="0">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Insert or Update Patient']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+
+            <!-- Conflict must not be published -->
+            <munit-tools:verify-call processor="amqp:publish"
+                                     times="0"/>
+        </munit:validation>
+    </munit:test>
+
+</mule>

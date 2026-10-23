@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+      http://www.mulesoft.org/schema/mule/core
+      http://www.mulesoft.org/schema/mule/core/current/mule.xsd">
+
+    <!-- Reusable Global Error Handler -->
+    <error-handler name="Global_HL7_Error_Handler">
+
+        <on-error-propagate
+            type="ANY"
+            logException="true"
+            enableNotifications="true"
+            doc:name="Handle Unexpected Error">
+
+            <logger
+                level="ERROR"
+                doc:name="Log Error Details"
+                message="#['HL7 processing failed. Error type: '&#10;                    ++ (error.errorType.namespace default 'UNKNOWN')&#10;                    ++ ':'&#10;                    ++ (error.errorType.identifier default 'UNKNOWN')&#10;                    ++ ', Description: '&#10;                    ++ ((error.description default 'Unknown error') as String)&#10;                    ++ ', Object: '&#10;                    ++ ((vars.hl7ObjectKey default 'Unknown') as String)]"/>
+
+        </on-error-propagate>
+
+    </error-handler>
+
+</mule>

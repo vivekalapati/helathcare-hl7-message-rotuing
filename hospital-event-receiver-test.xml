@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:munit="http://www.mulesoft.org/schema/mule/munit"
+      xmlns:munit-tools="http://www.mulesoft.org/schema/mule/munit-tools"
+      xsi:schemaLocation="
+http://www.mulesoft.org/schema/mule/munit http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd 
+        http://www.mulesoft.org/schema/mule/core
+        http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/munit
+        http://www.mulesoft.org/schema/mule/munit/current/mule-munit.xsd
+        http://www.mulesoft.org/schema/mule/munit-tools
+        http://www.mulesoft.org/schema/mule/munit-tools/current/mule-munit-tools.xsd">
+
+    <munit:config name="hospital-event-receiver-test.xml"/>
+
+    <munit:test name="HL7-Hospital-Event-Receiver-Test"
+                description="Verify hospital receives and logs an HL7 event">
+
+        <munit:execution>
+
+            <munit:set-event>
+                <munit:payload
+                    value="#[{
+                        messageId: 'MUNIT-HOSPITAL-001',
+                        eventType: 'A01',
+                        patientId: 'PATMUNIT001',
+                        encounterId: 'ENCMUNIT001',
+                        status: 'ADMITTED',
+                        ward: 'WARD1'
+                    }]"
+                    mediaType="application/java"/>
+            </munit:set-event>
+
+            <flow-ref name="hospital-event-receiver-flow"
+                      doc:name="Call Hospital Event Receiver"/>
+
+        </munit:execution>
+
+        <munit:validation>
+
+            <munit-tools:assert-that
+                expression="#[payload.messageId]"
+                is="#[MunitTools::equalTo('MUNIT-HOSPITAL-001')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.eventType]"
+                is="#[MunitTools::equalTo('A01')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.patientId]"
+                is="#[MunitTools::equalTo('PATMUNIT001')]"/>
+
+            <munit-tools:assert-that
+                expression="#[payload.status]"
+                is="#[MunitTools::equalTo('ADMITTED')]"/>
+
+            <munit-tools:verify-call
+                processor="mule:logger"
+                times="1">
+                <munit-tools:with-attributes>
+                    <munit-tools:with-attribute
+                        attributeName="doc:name"
+                        whereValue="#['Log Hospital Event']"/>
+                </munit-tools:with-attributes>
+            </munit-tools:verify-call>
+
+        </munit:validation>
+
+    </munit:test>
+
+</mule>
